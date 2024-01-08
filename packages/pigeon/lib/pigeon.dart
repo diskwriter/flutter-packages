@@ -11,3 +11,4 @@ export 'kotlin_generator.dart' show KotlinOptions;
 export 'objc_generator.dart' show ObjcOptions;
 export 'pigeon_lib.dart';
 export 'swift_generator.dart' show SwiftOptions;
+export 'typescript_generator.dart' show TypeScriptOptions;

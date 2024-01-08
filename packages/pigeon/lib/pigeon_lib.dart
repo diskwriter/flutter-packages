@@ -191,8 +191,16 @@ class PigeonOptions {
     this.astOut,
     this.debugGenerators,
     this.basePath,
+    this.typeScriptOut,
+    this.typeScriptOptions,
     String? dartPackageName,
   }) : _dartPackageName = dartPackageName;
+
+  /// Path to the typescript file out that will be generated
+  final String? typeScriptOut;
+
+  /// Options that control how TypeScript will be generated.
+  final TypeScriptOptions? typeScriptOptions;
 
   /// Path to the file which will be processed.
   final String? input;
@@ -298,6 +306,10 @@ class PigeonOptions {
       debugGenerators: map['debugGenerators'] as bool?,
       basePath: map['basePath'] as String?,
       dartPackageName: map['dartPackageName'] as String?,
+      typeScriptOut: map['typeScriptOut'] as String?,
+      typeScriptOptions: map.containsKey('typeScriptOptions')
+          ? TypeScriptOptions.fromMap(map['typeScriptOptions']! as Map<String, Object>)
+          : null,
     );
   }
 
@@ -306,6 +318,8 @@ class PigeonOptions {
   Map<String, Object> toMap() {
     final Map<String, Object> result = <String, Object>{
       if (input != null) 'input': input!,
+      if (typeScriptOut != null) 'typeScriptOut': typeScriptOut!,
+      if (typeScriptOptions != null) 'typeScriptOptions': typeScriptOptions!.toMap(),
       if (dartOut != null) 'dartOut': dartOut!,
       if (dartTestOut != null) 'dartTestOut': dartTestOut!,
       if (objcHeaderOut != null) 'objcHeaderOut': objcHeaderOut!,
@@ -696,6 +710,36 @@ class CppGeneratorAdapter implements GeneratorAdapter {
 
   @override
   List<Error> validate(PigeonOptions options, Root root) => <Error>[];
+}
+
+/// Typescript generator adapter
+class TypeScriptGeneratorAdapter implements GeneratorAdapter {
+  /// Constructor
+  TypeScriptGeneratorAdapter({this.fileTypeList = const <FileType>[FileType.na]});
+
+  @override
+  List<FileType> fileTypeList;
+
+  @override
+  void generate(StringSink sink, PigeonOptions options, Root root, FileType fileType) {
+    final TypeScriptOptions generatorOptions = options.typeScriptOptions ?? const TypeScriptOptions();
+    // TODO: options??
+    // TODO: implement generate
+    final TypeScriptGenerator generator = TypeScriptGenerator();
+    generator.generate(generatorOptions, root, sink, dartPackageName: options.getPackageName());
+  }
+
+  @override
+  IOSink? shouldGenerate(PigeonOptions options, FileType fileType) =>
+      _openSink(options.typeScriptOut, basePath: options.basePath ?? '');
+
+  @override
+  List<Error> validate(PigeonOptions options, Root root) {
+    // TODO: implement validate
+    // throw UnimplementedError();
+    // TODO:
+    return <Error>[];
+  }
 }
 
 /// A [GeneratorAdapter] that generates Kotlin source code.
@@ -1620,6 +1664,7 @@ ${_argParser.usage}''';
           CppGeneratorAdapter(),
           DartTestGeneratorAdapter(),
           ObjcGeneratorAdapter(),
+          TypeScriptGeneratorAdapter(),
           AstGeneratorAdapter(),
         ];
     _executeConfigurePigeon(options);
