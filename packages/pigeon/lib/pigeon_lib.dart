@@ -34,6 +34,7 @@ import 'java_generator.dart';
 import 'kotlin_generator.dart';
 import 'objc_generator.dart';
 import 'swift_generator.dart';
+import 'typescript_generator.dart';
 
 class _Asynchronous {
   const _Asynchronous();
@@ -49,6 +50,26 @@ class ConfigurePigeon {
 
   /// The [PigeonOptions] that will be merged into the command line options.
   final PigeonOptions options;
+}
+
+/// MetaData to annotate a Dart class as a required Pigeon message.
+///
+/// This annotation is used for Models that you want to be translated in the
+/// messages but not necessarily referenced in de Host-/FlutterApi.
+/// With this annotation you can generate models without generating api.
+class RequiredModel {
+  /// Constructor for RequiredModel.
+  const RequiredModel();
+}
+
+/// MetatData to indicate that the class should render as an interface rather
+/// than a class.
+///
+/// Because in TypeScript you might want to generate and interface for an object rather than an actual class.
+/// Will also cause a `parse` method to be generated that will give you a responding type back.
+class TypeScriptInterface {
+  /// Constructor for TypeScriptInterface.
+  const TypeScriptInterface();
 }
 
 /// Metadata to annotate a Pigeon API implemented by the host-platform.
@@ -947,13 +968,11 @@ class _RootBuilder extends dart_ast_visitor.RecursiveAstVisitor<Object?> {
     _storeCurrentApi();
     _storeCurrentClass();
 
-    final Map<TypeDeclaration, List<int>> referencedTypes =
-        getReferencedTypes(_apis, _classes);
-    final Set<String> referencedTypeNames =
-        referencedTypes.keys.map((TypeDeclaration e) => e.baseName).toSet();
+    final Map<TypeDeclaration, List<int>> referencedTypes = getReferencedTypes(_apis, _classes);
+    final Set<String> referencedTypeNames = referencedTypes.keys.map((TypeDeclaration e) => e.baseName).toSet();
     final List<Class> referencedClasses = List<Class>.from(_classes);
     referencedClasses
-        .removeWhere((Class x) => !referencedTypeNames.contains(x.name));
+        .removeWhere((Class x) => !referencedTypeNames.contains(x.name) && !_hasMetadata(x.meta!, 'RequiredModel'));
 
     final List<Enum> referencedEnums = List<Enum>.from(_enums);
     final Root completeRoot =
@@ -1146,8 +1165,8 @@ class _RootBuilder extends dart_ast_visitor.RecursiveAstVisitor<Object?> {
       _currentClass = Class(
         name: node.name.lexeme,
         fields: <NamedType>[],
-        documentationComments:
-            _documentationCommentsParser(node.documentationComment?.tokens),
+        documentationComments: _documentationCommentsParser(node.documentationComment?.tokens),
+        meta: node.metadata,
       );
     }
 

@@ -2,6 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+import 'package:analyzer/dart/ast/ast.dart';
 import 'package:collection/collection.dart' show ListEquality;
 import 'package:meta/meta.dart';
 import 'pigeon_lib.dart';
@@ -331,6 +332,7 @@ class Class extends Node {
     required this.name,
     required this.fields,
     this.documentationComments = const <String>[],
+    this.meta,
   });
 
   /// The name of the class.
@@ -346,9 +348,24 @@ class Class extends Node {
   /// For example: [" List of documentation comments, separated by line.", ...]
   List<String> documentationComments;
 
+  /// List of annotations.
+  /// Used for `@RequiredModel` and `@TypeScriptInterface` annotation.
+  NodeList<Annotation>? meta;
+
   @override
   String toString() {
     return '(Class name:$name fields:$fields documentationComments:$documentationComments)';
+  }
+
+  /// Check to see if a property is present in the `NodeList<Annotation> meta` of the class.
+  /// Will return false if meta is null.
+  bool hasMetaData(String query) {
+    if (meta == null) {
+      return false;
+    }
+
+    final Iterable<Annotation> annotations = meta!.where((Annotation element) => element.name.name == query);
+    return annotations.isNotEmpty;
   }
 }
 

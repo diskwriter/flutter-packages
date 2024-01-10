@@ -421,8 +421,16 @@ Map<TypeDeclaration, List<int>> getReferencedTypes(
     }
   }
 
-  final Set<String> referencedTypeNames =
-      references.map.keys.map((TypeDeclaration e) => e.baseName).toSet();
+  /// This is to make sure that classes referenced from Models annotated with
+  /// `@RequiredModel()` are also inlcuded in the generated code.
+  for (final Class c in classes) {
+    if (c.hasMetaData('RequiredModel')) {
+      for (final NamedType field in c.fields) {
+        references.add(field.type, field.offset);
+      }
+    }
+  }
+
   final List<String> classesToCheck = List<String>.from(referencedTypeNames);
   while (classesToCheck.isNotEmpty) {
     final String next = classesToCheck.removeLast();
@@ -455,17 +463,12 @@ bool _isConcreteTypeAmbiguous(TypeDeclaration type) {
 /// where the enumeration should be the key used in the buffer.
 Iterable<EnumeratedClass> getCodecClasses(Api api, Root root) sync* {
   final Set<String> enumNames = root.enums.map((Enum e) => e.name).toSet();
-  final Map<TypeDeclaration, List<int>> referencedTypes =
-      getReferencedTypes(<Api>[api], root.classes);
-  final Iterable<String> allTypeNames =
-      referencedTypes.keys.any(_isConcreteTypeAmbiguous)
-          ? root.classes.map((Class aClass) => aClass.name)
-          : referencedTypes.keys.map((TypeDeclaration e) => e.baseName);
+  final Map<TypeDeclaration, List<int>> referencedTypes = getReferencedTypes(<Api>[api], root.classes);
+  final Iterable<String> allTypeNames = referencedTypes.keys.any(_isConcreteTypeAmbiguous)
+      ? root.classes.map((Class aClass) => aClass.name)
+      : referencedTypes.keys.map((TypeDeclaration e) => e.baseName);
   final List<String> sortedNames = allTypeNames
-      .where((String element) =>
-          element != 'void' &&
-          !validTypes.contains(element) &&
-          !enumNames.contains(element))
+      .where((String element) => element != 'void' && !validTypes.contains(element) && !enumNames.contains(element))
       .toList();
   sortedNames.sort();
   int enumeration = _minimumCodecFieldKey;
