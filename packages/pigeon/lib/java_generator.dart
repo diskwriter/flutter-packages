@@ -331,14 +331,17 @@ class JavaGenerator extends StructuredGenerator<JavaOptions> {
     Class classDefinition, {
     required String dartPackageName,
   }) {
+    int fieldAmount = classDefinition.fields.length;
+    if (classDefinition.hasMetaData('SerializeWithRuntimeType')) {
+      fieldAmount += 1;
+    }
+
     indent.newln();
     indent.writeln('@NonNull');
     indent.write('ArrayList<Object> toList() ');
     indent.addScoped('{', '}', () {
-      indent.writeln(
-          'ArrayList<Object> toListResult = new ArrayList<Object>(${classDefinition.fields.length});');
-      for (final NamedType field
-          in getFieldsInSerializationOrder(classDefinition)) {
+      indent.writeln('ArrayList<Object> toListResult = new ArrayList<Object>($fieldAmount);');
+      for (final NamedType field in getFieldsInSerializationOrder(classDefinition)) {
         String toWriteValue = '';
         final String fieldName = field.name;
         if (field.type.isClass) {
@@ -349,6 +352,10 @@ class JavaGenerator extends StructuredGenerator<JavaOptions> {
           toWriteValue = field.name;
         }
         indent.writeln('toListResult.add($toWriteValue);');
+      }
+      if (classDefinition.hasMetaData('SerializeWithRuntimeType')) {
+        indent.writeln('// Dynamically added runtimeType because message is annotated with @SerializeWithRuntimeType');
+        indent.writeln("toListResult.add('${classDefinition.name}');");
       }
       indent.writeln('return toListResult;');
     });

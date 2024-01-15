@@ -1,7 +1,7 @@
 // Copyright 2013 The Flutter Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
-
+import 'package:collection/collection.dart' hide mergeMaps;
 import 'package:path/path.dart' as path;
 
 import 'ast.dart';
@@ -124,14 +124,52 @@ class DartGenerator extends StructuredGenerator<DartOptions> {
     Enum anEnum, {
     required String dartPackageName,
   }) {
+    if (anEnum.hasMetaData('StringEnum')) {
+      _writeStringEnum(generatorOptions, root, indent, anEnum, dartPackageName: dartPackageName);
+    } else {
+      _writeEnum(generatorOptions, root, indent, anEnum, dartPackageName: dartPackageName);
+    }
+  }
+
+  void _writeStringEnum(
+    DartOptions generatorOPtions,
+    Root root,
+    Indent indent,
+    Enum anEnum, {
+    required String dartPackageName,
+  }) {
     indent.newln();
-    addDocumentationComments(
-        indent, anEnum.documentationComments, _docCommentSpec);
+    addDocumentationComments(indent, anEnum.documentationComments, _docCommentSpec);
+    indent.write('enum ${anEnum.name}');
+    indent.addScoped('{', '}', () {
+      for (final EnumMember enumMember in anEnum.members) {
+        addDocumentationComments(indent, enumMember.documentationComments, _docCommentSpec);
+        indent.writeln("${enumMember.name}(stringValue: '${enumMember.name}'),");
+      }
+
+      indent.newln();
+      indent.writeln('final String stringValue;');
+      indent.writeln('const ${anEnum.name}({required this.stringValue});');
+
+      indent.newln();
+      indent.writeln('@override');
+      indent.writeln("String toString() => '${anEnum.name}.\$stringValue';");
+    });
+  }
+
+  void _writeEnum(
+    DartOptions generatorOPtions,
+    Root root,
+    Indent indent,
+    Enum anEnum, {
+    required String dartPackageName,
+  }) {
+    indent.newln();
+    addDocumentationComments(indent, anEnum.documentationComments, _docCommentSpec);
     indent.write('enum ${anEnum.name} ');
     indent.addScoped('{', '}', () {
       for (final EnumMember member in anEnum.members) {
-        addDocumentationComments(
-            indent, member.documentationComments, _docCommentSpec);
+        addDocumentationComments(indent, member.documentationComments, _docCommentSpec);
         indent.writeln('${member.name},');
       }
     });
@@ -146,31 +184,30 @@ class DartGenerator extends StructuredGenerator<DartOptions> {
     required String dartPackageName,
   }) {
     indent.newln();
-    addDocumentationComments(
-        indent, classDefinition.documentationComments, _docCommentSpec);
-
+    addDocumentationComments(indent, classDefinition.documentationComments, _docCommentSpec);
     indent.write('class ${classDefinition.name} ');
     indent.addScoped('{', '}', () {
-      _writeConstructor(indent, classDefinition);
-      indent.newln();
-      for (final NamedType field
-          in getFieldsInSerializationOrder(classDefinition)) {
-        addDocumentationComments(
-            indent, field.documentationComments, _docCommentSpec);
+      for (final NamedType field in getFieldsInSerializationOrder(classDefinition)) {
+        addDocumentationComments(indent, field.documentationComments, _docCommentSpec);
 
         final String datatype = _addGenericTypesNullable(field.type);
         indent.writeln('$datatype ${field.name};');
         indent.newln();
       }
-      writeClassEncode(
+
+      _writeConstructor(indent, classDefinition);
+
+      indent.newln();
+      writeClassDecode(
         generatorOptions,
         root,
         indent,
         classDefinition,
         dartPackageName: dartPackageName,
       );
+
       indent.newln();
-      writeClassDecode(
+      writeClassEncode(
         generatorOptions,
         root,
         indent,
@@ -181,19 +218,92 @@ class DartGenerator extends StructuredGenerator<DartOptions> {
   }
 
   void _writeConstructor(Indent indent, Class classDefinition) {
-    indent.write(classDefinition.name);
-    indent.addScoped('({', '});', () {
-      for (final NamedType field
-          in getFieldsInSerializationOrder(classDefinition)) {
-        final String required =
-            !field.type.isNullable && field.defaultValue == null
-                ? 'required '
-                : '';
-        final String defaultValueString =
-            field.defaultValue == null ? '' : ' = ${field.defaultValue}';
-        indent.writeln('${required}this.${field.name}$defaultValueString,');
+    /// Sometimes you only want named constructors.
+    if (!classDefinition.hasMetaData('NoDefaultConstructor')) {
+      indent.write(classDefinition.name);
+      indent.addScoped('({', '});', () {
+        for (final NamedType field in getFieldsInSerializationOrder(classDefinition)) {
+          final String required = !field.type.isNullable && field.defaultValue == null ? 'required ' : '';
+          final String defaultValueString = field.defaultValue == null ? '' : ' = ${field.defaultValue}';
+          indent.writeln('${required}this.${field.name}$defaultValueString,');
+        }
+      });
+    }
+
+    if (classDefinition.hasNamedConstructors) {
+      for (final String namedConstructor in classDefinition.namedConstructors) {
+        /// 1.  Test for the format of the named constructor? E.g. are there still parameters that have to be overriden
+        ///     or is everything assigned by default? This makes a difference in how we deal with brackets.
+        final bool hasConstructorNonDefaultValues = classDefinition.fields.firstWhereOrNull((NamedType field) =>
+                field.constructorDefaultValues == null ||
+                !field.constructorDefaultValues!.keys.contains(namedConstructor)) !=
+            null;
+
+        final bool hasConstructorDefaultValues = classDefinition.fields.firstWhereOrNull((NamedType field) {
+              return field.constructorDefaultValues != null &&
+                  field.constructorDefaultValues!.keys.contains(namedConstructor);
+            }) !=
+            null;
+
+        /// 2. Create the named constructor. If we have non-default values we also include brackets to make sure that
+        ///    the user can set them.
+        indent.newln();
+        if (hasConstructorNonDefaultValues) {
+          indent.write('${classDefinition.name}.$namedConstructor');
+          indent.addScoped('({', '})', () {
+            for (final NamedType field in getFieldsInSerializationOrder(classDefinition)) {
+              /// Only do this for fields that don't get default values assigned to them in this named constructor
+              if (field.constructorDefaultValues == null ||
+                  !!!field.constructorDefaultValues!.keys.contains(namedConstructor)) {
+                final String required = ((!field.type.isNullable && field.defaultValue == null) ||
+                        field.constructorRequiredParameters?[namedConstructor] == true)
+                    ? 'required '
+                    : '';
+                final String defaultValueString = field.defaultValue == null ? '' : ' = ${field.defaultValue}';
+                indent.writeln('${required}this.${field.name}$defaultValueString,');
+              }
+            }
+          }, addTrailingNewline: false);
+        } else {
+          /// The named constructor only has default values. we create an empty arguments list and assign everything by default.
+          indent.writeln('${classDefinition.name}.$namedConstructor()');
+        }
+
+        if (hasConstructorDefaultValues) {
+          if (hasConstructorNonDefaultValues) {
+            indent.add(' : ');
+          } else {
+            indent.nest(1, () {
+              indent.write(': ');
+            });
+          }
+
+          bool firstNamedConstructorDefault = true;
+          for (final NamedType field in getFieldsInSerializationOrder(classDefinition)) {
+            if (field.constructorDefaultValues != null &&
+                field.constructorDefaultValues!.keys.contains(namedConstructor)) {
+              if (firstNamedConstructorDefault) {
+                indent.add('${field.name} = ${field.constructorDefaultValues![namedConstructor]}');
+                firstNamedConstructorDefault = false;
+              } else {
+                indent.add(',');
+                indent.newln();
+                indent.write(
+                    '${repeat(indent.tab, 2).join()}${field.name} = ${field.constructorDefaultValues![namedConstructor]}');
+              }
+            }
+          }
+          indent.add(';');
+          indent.newln();
+        }
       }
-    });
+    }
+  }
+
+  String _camelCaseToSnakeCase(String value) {
+    final RegExp regExp = RegExp(r'(?=[A-Z])');
+    final List<String> split = value.split(regExp).map((String s) => s.toLowerCase()).toList();
+    return split.join('_');
   }
 
   @override
@@ -204,29 +314,37 @@ class DartGenerator extends StructuredGenerator<DartOptions> {
     Class classDefinition, {
     required String dartPackageName,
   }) {
-    indent.write('Object encode() ');
-    indent.addScoped('{', '}', () {
-      indent.write(
-        'return <Object?>',
-      );
-      indent.addScoped('[', '];', () {
-        for (final NamedType field
-            in getFieldsInSerializationOrder(classDefinition)) {
-          final String conditional = field.type.isNullable ? '?' : '';
-          if (field.type.isClass) {
-            indent.writeln(
-              '${field.name}$conditional.encode(),',
-            );
-          } else if (field.type.isEnum) {
-            indent.writeln(
-              '${field.name}$conditional.index,',
-            );
-          } else {
-            indent.writeln('${field.name},');
-          }
-        }
-      });
+    indent.write('Map<String, dynamic> toJson() =>');
+    indent.addScoped(' {', '};', () {
+      for (final NamedType field in getFieldsInSerializationOrder(classDefinition)) {
+        indent.writeln(
+            "'${_camelCaseToSnakeCase(field.name)}': ${field.name}${field.type.isEnum ? '.toString()' : ''}${field.type.isClass ? '.toJson()' : ''},");
+      }
     });
+
+    // Original
+    // indent.write('Object encode() ');
+    // indent.addScoped('{', '}', () {
+    //   indent.write(
+    //     'return <Object?>',
+    //   );
+    //   indent.addScoped('[', '];', () {
+    //     for (final NamedType field in getFieldsInSerializationOrder(classDefinition)) {
+    //       final String conditional = field.type.isNullable ? '?' : '';
+    //       if (field.type.isClass) {
+    //         indent.writeln(
+    //           '${field.name}$conditional.encode(),',
+    //         );
+    //       } else if (field.type.isEnum) {
+    //         indent.writeln(
+    //           '${field.name}$conditional.index,',
+    //         );
+    //       } else {
+    //         indent.writeln('${field.name},');
+    //       }
+    //     }
+    //   });
+    // });
   }
 
   @override
@@ -237,65 +355,78 @@ class DartGenerator extends StructuredGenerator<DartOptions> {
     Class classDefinition, {
     required String dartPackageName,
   }) {
-    void writeValueDecode(NamedType field, int index) {
-      final String resultAt = 'result[$index]';
-      final String castCallPrefix = field.type.isNullable ? '?' : '!';
-      final String genericType = _makeGenericTypeArguments(field.type);
-      final String castCall = _makeGenericCastCall(field.type);
-      final String nullableTag = field.type.isNullable ? '?' : '';
-      if (field.type.isClass) {
-        final String nonNullValue =
-            '${field.type.baseName}.decode($resultAt! as List<Object?>)';
-        if (field.type.isNullable) {
-          indent.format('''
-$resultAt != null
-\t\t? $nonNullValue
-\t\t: null''', leadingSpace: false, trailingNewline: false);
+    indent.writeln('${classDefinition.name}.fromJson(Map<String, dynamic> data)');
+    indent.nest(1, () {
+      bool isFirst = true;
+      for (final NamedType field in getFieldsInSerializationOrder(classDefinition)) {
+        if (isFirst) {
+          indent.write(": ${field.name} = data['${_camelCaseToSnakeCase(field.name)}']");
+          isFirst = false;
         } else {
-          indent.add(nonNullValue);
+          indent.add(',');
+          indent.newln();
+          indent.write("${indent.tab}${field.name} = data['${_camelCaseToSnakeCase(field.name)}']");
         }
-      } else if (field.type.isEnum) {
-        final String nonNullValue =
-            '${field.type.baseName}.values[$resultAt! as int]';
-        if (field.type.isNullable) {
-          indent.format('''
-$resultAt != null
-\t\t? $nonNullValue
-\t\t: null''', leadingSpace: false, trailingNewline: false);
-        } else {
-          indent.add(nonNullValue);
-        }
-      } else if (field.type.typeArguments.isNotEmpty) {
-        indent.add(
-          '($resultAt as $genericType?)$castCallPrefix$castCall',
-        );
-      } else {
-        final String castCallForcePrefix = field.type.isNullable ? '' : '!';
-        final String castString = field.type.baseName == 'Object'
-            ? ''
-            : ' as $genericType$nullableTag';
-
-        indent.add(
-          '$resultAt$castCallForcePrefix$castString',
-        );
       }
-    }
-
-    indent.write(
-      'static ${classDefinition.name} decode(Object result) ',
-    );
-    indent.addScoped('{', '}', () {
-      indent.writeln('result as List<Object?>;');
-      indent.write('return ${classDefinition.name}');
-      indent.addScoped('(', ');', () {
-        enumerate(getFieldsInSerializationOrder(classDefinition),
-            (int index, final NamedType field) {
-          indent.write('${field.name}: ');
-          writeValueDecode(field, index);
-          indent.addln(',');
-        });
-      });
+      indent.add(';');
+      indent.newln();
     });
+
+    // Original code
+//     void writeValueDecode(NamedType field, int index) {
+//       final String resultAt = 'result[$index]';
+//       final String castCallPrefix = field.type.isNullable ? '?' : '!';
+//       final String genericType = _makeGenericTypeArguments(field.type);
+//       final String castCall = _makeGenericCastCall(field.type);
+//       final String nullableTag = field.type.isNullable ? '?' : '';
+//       if (field.type.isClass) {
+//         final String nonNullValue = '${field.type.baseName}.decode($resultAt! as List<Object?>)';
+//         if (field.type.isNullable) {
+//           indent.format('''
+// $resultAt != null
+// \t\t? $nonNullValue
+// \t\t: null''', leadingSpace: false, trailingNewline: false);
+//         } else {
+//           indent.add(nonNullValue);
+//         }
+//       } else if (field.type.isEnum) {
+//         final String nonNullValue = '${field.type.baseName}.values[$resultAt! as int]';
+//         if (field.type.isNullable) {
+//           indent.format('''
+// $resultAt != null
+// \t\t? $nonNullValue
+// \t\t: null''', leadingSpace: false, trailingNewline: false);
+//         } else {
+//           indent.add(nonNullValue);
+//         }
+//       } else if (field.type.typeArguments.isNotEmpty) {
+//         indent.add(
+//           '($resultAt as $genericType?)$castCallPrefix$castCall',
+//         );
+//       } else {
+//         final String castCallForcePrefix = field.type.isNullable ? '' : '!';
+//         final String castString = field.type.baseName == 'Object' ? '' : ' as $genericType$nullableTag';
+
+//         indent.add(
+//           '$resultAt$castCallForcePrefix$castString',
+//         );
+//       }
+//     }
+
+//     indent.write(
+//       'static ${classDefinition.name} decode(Object result) ',
+//     );
+//     indent.addScoped('{', '}', () {
+//       indent.writeln('result as List<Object?>;');
+//       indent.write('return ${classDefinition.name}');
+//       indent.addScoped('(', ');', () {
+//         enumerate(getFieldsInSerializationOrder(classDefinition), (int index, final NamedType field) {
+//           indent.write('${field.name}: ');
+//           writeValueDecode(field, index);
+//           indent.addln(',');
+//         });
+//       });
+//     });
   }
 
   /// Writes the code for host [Api], [api].

@@ -72,6 +72,29 @@ class TypeScriptInterface {
   const TypeScriptInterface();
 }
 
+/// Metadata to inject the RuntimeType into the serialized message.
+/// Can help with deserialization on the other end.
+class SerializeWithRuntimeType {
+  /// Constructor for WithRuntimeType.
+  const SerializeWithRuntimeType();
+}
+
+/// Metadata to force an enum to render as a class enum with string members.
+/// By default it will take the constant values as exact match for the strings.
+/// Will also override the values / toString methods so they are EnumName.constant
+/// (Because this is how dart .toString works by default and we need that to reconstruct in our codebase)
+class StringEnum {
+  /// Constructor for StringEnum
+  const StringEnum();
+}
+
+/// For some cases you don't want to allow a default constructor (for example if there are only named constructors)
+/// You still need to create a default constructor for visit but can disable in generation.
+class NoDefaultConstructor {
+  /// Constructor for NoDefaultConstructor
+  const NoDefaultConstructor();
+}
+
 /// Metadata to annotate a Pigeon API implemented by the host-platform.
 ///
 /// The abstract class with this annotation groups a collection of Dart↔host
@@ -1425,12 +1448,52 @@ class _RootBuilder extends dart_ast_visitor.RecursiveAstVisitor<Object?> {
                 'Constructor initializers aren\'t supported in data classes (use "this.fieldName") ("$node").',
             lineNumber: _calculateLineNumber(source, node.offset)));
       } else {
-        for (final dart_ast.FormalParameter param
-            in node.parameters.parameters) {
-          if (param is dart_ast.DefaultFormalParameter) {
-            if (param.name != null && param.defaultValue != null) {
-              _currentClassDefaultValues[param.name!.toString()] =
-                  param.defaultValue!.toString();
+        /// If `node.name` is not null then we're working with a named constructor.
+        /// These are properly visited so that means that we can create them too.
+        /// If we are working with a named constructor we will check out the parameter (fields)
+        /// and load them under the named constructor.
+        ///
+        /// By doing this we can then later recreate a constructor method with the correct
+        /// defaults for that constructor in the correct way for that language.
+        /// (This saves us having to implement initializers because they are not supported by default in Pigeon);
+        if (node.name != null) {
+          _currentClass?.namedConstructors.add(node.name!.toString());
+          _currentClass?.namedConstructorParameters[node.name!.toString()] = node.parameters.parameters;
+          for (final dart_ast.FormalParameter param in node.parameters.parameters) {
+            if (param is dart_ast.DefaultFormalParameter) {
+              /// Find the field on the class that matches with the parameter.
+              final NamedType? field =
+                  _currentClass?.fields.firstWhereOrNull((NamedType element) => element.name == param.name?.toString());
+
+              /// Check to make sure we actually found something
+              if (field != null) {
+                /// Indicate if for this constructor the field is required or not. This can differ based on the constructor
+                /// and is unrelated to whether the field is nullable (because it can be set by a defautl value)
+                field.constructorRequiredParameters ??= <String, bool>{};
+                field.constructorRequiredParameters![node.name!.toString()] = param.isRequired;
+
+                /// Set default values if they exist.
+                if (param.name != null && param.defaultValue != null) {
+                  field.constructorDefaultValues ??= <String, String>{};
+                  field.constructorDefaultValues![node.name!.toString()] = param.defaultValue!.toString();
+                }
+              }
+            }
+          }
+        } else {
+          // By default the params are just loaded on class level.
+          for (final dart_ast.FormalParameter param in node.parameters.parameters) {
+            if (param is dart_ast.DefaultFormalParameter) {
+              // Building default values;
+              if (param.name != null && param.defaultValue != null) {
+                // This does not work because the class fields are traversed BEFORE the constructor is.
+                // Hence, the fields are always assigned an empty map with default values.
+                // TODO --> PR to actual Pigeon repo.
+                // _currentClassDefaultValues[param.name!.toString()] = param.defaultValue!.toString();
+                _currentClass?.fields
+                    .firstWhereOrNull((NamedType element) => element.name == param.name!.toString())
+                    ?.defaultValue = param.defaultValue!.toString();
+              }
             }
           }
         }

@@ -94,16 +94,16 @@ import FlutterMacOS
     Enum anEnum, {
     required String dartPackageName,
   }) {
+    final bool isStringEnum = anEnum.hasMetaData('StringEnum');
     indent.newln();
-    addDocumentationComments(
-        indent, anEnum.documentationComments, _docCommentSpec);
+    addDocumentationComments(indent, anEnum.documentationComments, _docCommentSpec);
 
-    indent.write('enum ${anEnum.name}: Int ');
+    indent.write('enum ${anEnum.name}: ${isStringEnum ? 'String' : 'Int'} ');
     indent.addScoped('{', '}', () {
       enumerate(anEnum.members, (int index, final EnumMember member) {
-        addDocumentationComments(
-            indent, member.documentationComments, _docCommentSpec);
-        indent.writeln('case ${_camelCase(member.name)} = $index');
+        addDocumentationComments(indent, member.documentationComments, _docCommentSpec);
+        indent.writeln(
+            'case ${_camelCase(member.name)} = ${isStringEnum ? '"${anEnum.name}.${member.name}"' : '$index'}');
       });
     });
   }
@@ -120,12 +120,14 @@ import FlutterMacOS
       ' Generated class from Pigeon that represents data sent in messages.'
     ];
     indent.newln();
-    addDocumentationComments(
-        indent, classDefinition.documentationComments, _docCommentSpec,
+    addDocumentationComments(indent, classDefinition.documentationComments, _docCommentSpec,
         generatorComments: generatedComments);
 
     indent.write('struct ${classDefinition.name} ');
     indent.addScoped('{', '}', () {
+      if (classDefinition.hasMetaData('SerializeWithRuntimeType')) {
+        indent.writeln('let runtimeType: String = "${classDefinition.name}"');
+      }
       getFieldsInSerializationOrder(classDefinition).forEach((NamedType field) {
         _writeClassField(indent, field);
       });
@@ -174,6 +176,10 @@ import FlutterMacOS
           }
 
           indent.writeln('$toWriteValue,');
+        }
+
+        if (classDefinition.hasMetaData('SerializeWithRuntimeType')) {
+          indent.writeln('runtimeType,');
         }
       });
     });

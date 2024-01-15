@@ -43,7 +43,11 @@ class TypeScriptGenerator extends StructuredGenerator<TypeScriptOptions> {
     indent.write('export enum ${anEnum.name} ');
     indent.addScoped('{', '}', () {
       enumerate(anEnum.members, (int index, final EnumMember member) {
-        indent.writeln('${member.name},');
+        if (anEnum.hasMetaData('StringEnum')) {
+          indent.writeln("${member.name} = '${anEnum.name}.${member.name}',");
+        } else {
+          indent.writeln('${member.name},');
+        }
       });
     });
   }
@@ -141,6 +145,9 @@ class TypeScriptGenerator extends StructuredGenerator<TypeScriptOptions> {
       for (final NamedType field in getFieldsInSerializationOrder(classDefiniton)) {
         _writeTypedVariable(indent, field, snakeCase: true);
       }
+      if (classDefiniton.hasMetaData('SerializeWithRuntimeType')) {
+        indent.writeln('runtimeType: string,');
+      }
     }, addTrailingNewline: false);
 
     /// Not having the constructor parameter type as an interface makes that regular
@@ -151,6 +158,9 @@ class TypeScriptGenerator extends StructuredGenerator<TypeScriptOptions> {
       indent.writeScoped('return {', '};', () {
         for (final NamedType field in getFieldsInSerializationOrder(classDefiniton)) {
           indent.writeln('${_camelCaseToSnakeCase(field.name)}: this.${field.name},');
+        }
+        if (classDefiniton.hasMetaData('SerializeWithRuntimeType')) {
+          indent.writeln("runtimeType: '${classDefiniton.name}',");
         }
       });
     });
@@ -189,13 +199,13 @@ class TypeScriptGenerator extends StructuredGenerator<TypeScriptOptions> {
   void writeFileImports(TypeScriptOptions generatorOptions, Root root, Indent indent,
       {required String dartPackageName}) {
     // TODO: Finish, this is just a test
-    indent.writeln('// this would be an import.');
   }
 
   @override
   void writeFilePrologue(TypeScriptOptions generatorOptions, Root root, Indent indent,
       {required String dartPackageName}) {
-    // TODO: implement writeFilePrologue
+    indent.writeln('// ${getGeneratedCodeWarning()}');
+    indent.writeln('// $seeAlsoWarning');
   }
 
   @override

@@ -225,6 +225,8 @@ class NamedType extends Node {
     required this.type,
     this.offset,
     this.defaultValue,
+    this.constructorDefaultValues,
+    this.constructorRequiredParameters,
     this.documentationComments = const <String>[],
   });
 
@@ -238,7 +240,17 @@ class NamedType extends Node {
   final int? offset;
 
   /// Stringified version of the default value of types that have default values.
-  final String? defaultValue;
+  String? defaultValue;
+
+  /// Default values for different named constructors.
+  /// Key should be the name of the constructor with value being the default value for that constructor.
+  Map<String, String>? constructorDefaultValues;
+
+  /// Whether or not a parameter is required on a certain (named) constructor.
+  /// These have to be seperately stored because the analyzer doesn't provide this information.
+  /// and the values can differ based on the named constructor.
+  /// Key is constructor name, value is whether the parameter is required.
+  Map<String, bool>? constructorRequiredParameters;
 
   /// List of documentation comments, separated by line.
   ///
@@ -254,6 +266,8 @@ class NamedType extends Node {
       type: type,
       offset: offset,
       defaultValue: defaultValue,
+      constructorDefaultValues: constructorDefaultValues,
+      constructorRequiredParameters: constructorRequiredParameters,
       documentationComments: documentationComments,
     );
   }
@@ -338,6 +352,15 @@ class Class extends Node {
   /// The name of the class.
   String name;
 
+  /// All the named constructors of this class
+  List<String> namedConstructors = <String>[];
+
+  /// Easy getter to see if a class definition has named constructors.
+  bool get hasNamedConstructors => namedConstructors.isNotEmpty;
+
+  /// All the fields used in named constructors
+  Map<String, List<FormalParameter>> namedConstructorParameters = <String, List<FormalParameter>>{};
+
   /// All the fields contained in the class.
   List<NamedType> fields;
 
@@ -349,7 +372,7 @@ class Class extends Node {
   List<String> documentationComments;
 
   /// List of annotations.
-  /// Used for `@RequiredModel` and `@TypeScriptInterface` annotation.
+  /// Used for `@RequiredModel`, `@WithRuntimeType` and `@TypeScriptInterface` annotation.
   NodeList<Annotation>? meta;
 
   @override
@@ -376,6 +399,7 @@ class Enum extends Node {
     required this.name,
     required this.members,
     this.documentationComments = const <String>[],
+    this.meta,
   });
 
   /// The name of the enum.
@@ -391,9 +415,24 @@ class Enum extends Node {
   /// For example: [" List of documentation comments, separated by line.", ...]
   List<String> documentationComments;
 
+  /// Stored metadata for the enum.
+  /// Used for the [@StringEnum] annotation
+  NodeList<Annotation>? meta;
+
   @override
   String toString() {
     return '(Enum name:$name members:$members documentationComments:$documentationComments)';
+  }
+
+  /// Check to see if a property is present in the `NodeList<Annotation> meta` of the class.
+  /// Will return false if meta is null.
+  bool hasMetaData(String query) {
+    if (meta == null) {
+      return false;
+    }
+
+    final Iterable<Annotation> annotations = meta!.where((Annotation element) => element.name.name == query);
+    return annotations.isNotEmpty;
   }
 }
 
