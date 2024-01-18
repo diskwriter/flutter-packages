@@ -216,8 +216,17 @@ class TypeDeclaration {
   }
 }
 
+/// For mapping in our JSON formats.
+extension SnakeCaseGetter on String {
+  /// Returns a copy of the string but as a snake cased string.
+  String get snakeCase {
+    final RegExp regExp = RegExp(r'(?=[A-Z])');
+    final List<String> split = this.split(regExp).map((String s) => s.toLowerCase()).toList();
+    return split.join('_');
+  }
+}
+
 /// Represents a named entity that has a type.
-@immutable
 class NamedType extends Node {
   /// Parametric constructor for [NamedType].
   NamedType({
@@ -434,6 +443,9 @@ class Enum extends Node {
     final Iterable<Annotation> annotations = meta!.where((Annotation element) => element.name.name == query);
     return annotations.isNotEmpty;
   }
+
+  /// Easy getter to see if an enum is a string enum
+  bool get isStringEnum => hasMetaData('StringEnum');
 }
 
 /// Represents a Enum member.

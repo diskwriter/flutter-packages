@@ -2,6 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+import 'package:collection/collection.dart' hide mergeMaps;
+
 import 'ast.dart';
 import 'functional.dart';
 import 'generator.dart';
@@ -94,7 +96,7 @@ import FlutterMacOS
     Enum anEnum, {
     required String dartPackageName,
   }) {
-    final bool isStringEnum = anEnum.hasMetaData('StringEnum');
+    final bool isStringEnum = anEnum.isStringEnum;
     indent.newln();
     addDocumentationComments(indent, anEnum.documentationComments, _docCommentSpec);
 
@@ -103,7 +105,7 @@ import FlutterMacOS
       enumerate(anEnum.members, (int index, final EnumMember member) {
         addDocumentationComments(indent, member.documentationComments, _docCommentSpec);
         indent.writeln(
-            'case ${_camelCase(member.name)} = ${isStringEnum ? '"${anEnum.name}.${member.name}"' : '$index'}');
+            'case ${isStringEnum ? member.name : _camelCase(member.name)} = ${isStringEnum ? '"${anEnum.name}.${member.name}"' : '$index'}');
       });
     });
   }
@@ -132,6 +134,18 @@ import FlutterMacOS
         _writeClassField(indent, field);
       });
 
+      /// Structs only have member initialization for their constructors
+      /// Since we want more of a Factory Method  / Named constructor approach
+      /// we will work with an extension and write static methods on there.
+      /// Q: Does it have to be with an extension? Can't I just write classes?
+      if (classDefinition.hasNamedConstructors) {
+        indent.newln();
+        if (classDefinition.hasMetaData('NoDefaultConstructor')) {
+          _writePrivateInit(generatorOptions, root, indent, classDefinition, dartPackageName: dartPackageName);
+        }
+        _writeConstructorMethods(generatorOptions, root, indent, classDefinition, dartPackageName: dartPackageName);
+      }
+
       indent.newln();
       writeClassDecode(
         generatorOptions,
@@ -140,6 +154,7 @@ import FlutterMacOS
         classDefinition,
         dartPackageName: dartPackageName,
       );
+      indent.newln();
       writeClassEncode(
         generatorOptions,
         root,
@@ -150,6 +165,79 @@ import FlutterMacOS
     });
   }
 
+  void _writePrivateInit(
+    SwiftOptions generatorOptions,
+    Root root,
+    Indent indent,
+    Class classDefinition, {
+    required String dartPackageName,
+  }) {
+    /// 1. Write the default constructor but make it private. Forcing users to use the named constructors.
+    indent.writeln('// Default init;');
+    indent.writeln('private init(');
+    indent.nest(1, () {
+      for (final NamedType field in getFieldsInSerializationOrder(classDefinition)) {
+        final String comma = getFieldsInSerializationOrder(classDefinition).last == field ? '' : ',';
+        indent.writeln('${field.name}: ${_nullsafeSwiftTypeForDartType(field.type)}$comma');
+      }
+    });
+    indent.writeln(') {');
+    indent.nest(1, () {
+      for (final NamedType field in getFieldsInSerializationOrder(classDefinition)) {
+        indent.writeln('self.${field.name} = ${field.name}');
+      }
+    });
+    indent.writeln('}');
+  }
+
+  void _writeConstructorMethods(
+    SwiftOptions generatorOptions,
+    Root root,
+    Indent indent,
+    Class classDefinition, {
+    required String dartPackageName,
+  }) {
+    for (final String namedConstructor in classDefinition.namedConstructors) {
+      final bool hasConstructorNonDefaultValues = classDefinition.fields.firstWhereOrNull((NamedType field) =>
+              field.constructorDefaultValues == null ||
+              !field.constructorDefaultValues!.keys.contains(namedConstructor)) !=
+          null;
+
+      indent.newln();
+
+      /// if we don't expect any non-default values then we can just create an empty constructor.
+      if (!hasConstructorNonDefaultValues) {
+        indent.writeln('static public func $namedConstructor() -> ${classDefinition.name} {');
+      } else {
+        indent.writeln('static public func $namedConstructor(');
+        indent.nest(1, () {
+          for (final NamedType field in getFieldsInSerializationOrder(classDefinition)) {
+            if (field.constructorDefaultValues == null ||
+                !field.constructorDefaultValues!.containsKey(namedConstructor)) {
+              indent.writeln('${field.name}: ${_nullsafeSwiftTypeForDartType(field.type)}, ');
+            }
+          }
+        });
+        indent.writeln(') -> ${classDefinition.name} {');
+      }
+      indent.nest(1, () {
+        indent.writeScoped('return ${classDefinition.name}(', ');', () {
+          for (final NamedType field in getFieldsInSerializationOrder(classDefinition)) {
+            final String comma = getFieldsInSerializationOrder(classDefinition).last == field ? '' : ',';
+            if (field.constructorDefaultValues == null ||
+                !field.constructorDefaultValues!.containsKey(namedConstructor)) {
+              indent.writeln('${field.name}: ${field.name}$comma');
+            } else {
+              indent.writeln(
+                  '${field.name}: ${_swiftValueForDartValue(field.constructorDefaultValues![namedConstructor])}$comma');
+            }
+          }
+        });
+      });
+      indent.writeln('}');
+    }
+  }
+
   @override
   void writeClassEncode(
     SwiftOptions generatorOptions,
@@ -158,31 +246,53 @@ import FlutterMacOS
     Class classDefinition, {
     required String dartPackageName,
   }) {
-    indent.write('func toList() -> [Any?] ');
-    indent.addScoped('{', '}', () {
-      indent.write('return ');
-      indent.addScoped('[', ']', () {
-        for (final NamedType field
-            in getFieldsInSerializationOrder(classDefinition)) {
-          String toWriteValue = '';
-          final String fieldName = field.name;
-          final String nullsafe = field.type.isNullable ? '?' : '';
-          if (field.type.isClass) {
-            toWriteValue = '$fieldName$nullsafe.toList()';
-          } else if (field.type.isEnum) {
-            toWriteValue = '$fieldName$nullsafe.rawValue';
+    indent.writeScoped('public func toJson() -> Dictionary<String, Any?> {', '}', () {
+      indent.writeScoped('return [', '];', () {
+        for (final NamedType field in getFieldsInSerializationOrder(classDefinition)) {
+          final String comma = getFieldsInSerializationOrder(classDefinition).last == field ? '' : ',';
+          String toWriteValue = 'self.';
+          if (field.type.isEnum) {
+            toWriteValue += '${field.name}.rawValue';
+          } else if (field.type.isClass) {
+            toWriteValue += '${field.name}.toJson()';
           } else {
-            toWriteValue = field.name;
+            toWriteValue += field.name;
           }
 
-          indent.writeln('$toWriteValue,');
+          indent.writeln('"${field.name.snakeCase}": $toWriteValue$comma');
         }
 
-        if (classDefinition.hasMetaData('SerializeWithRuntimeType')) {
-          indent.writeln('runtimeType,');
-        }
+        // if (classDefinition.hasMetaData('SerializeWithRuntimeType')) {
+        //   indent.writeln('runtimeType,');
+        // }
       });
     });
+
+    // Original code
+    // indent.write('func toList() -> [Any?] ');
+    // indent.addScoped('{', '}', () {
+    //   indent.write('return ');
+    //   indent.addScoped('[', ']', () {
+    //     for (final NamedType field in getFieldsInSerializationOrder(classDefinition)) {
+    //       String toWriteValue = '';
+    //       final String fieldName = field.name;
+    //       final String nullsafe = field.type.isNullable ? '?' : '';
+    //       if (field.type.isClass) {
+    //         toWriteValue = '$fieldName$nullsafe.toList()';
+    //       } else if (field.type.isEnum) {
+    //         toWriteValue = '$fieldName$nullsafe.rawValue';
+    //       } else {
+    //         toWriteValue = field.name;
+    //       }
+
+    //       indent.writeln('$toWriteValue,');
+    //     }
+
+    //     if (classDefinition.hasMetaData('SerializeWithRuntimeType')) {
+    //       indent.writeln('runtimeType,');
+    //     }
+    //   });
+    // });
   }
 
   @override
@@ -193,43 +303,62 @@ import FlutterMacOS
     Class classDefinition, {
     required String dartPackageName,
   }) {
-    final String className = classDefinition.name;
-    indent.write('static func fromList(_ list: [Any?]) -> $className? ');
+    indent.writeScoped(
+      'static public func fromJson(data: Dictionary<String, Any?>) throws -> ${classDefinition.name} {',
+      '}',
+      () {
+        indent.writeScoped('return try ${classDefinition.name}(', ');', () {
+          for (final NamedType field in getFieldsInSerializationOrder(classDefinition)) {
+            final String comma = getFieldsInSerializationOrder(classDefinition).last == field ? '' : ',';
+            String toWriteValue = '';
+            if (field.type.isEnum) {
+              final bool isStringEnum = field.type.associatedEnum?.isStringEnum ?? false;
+              toWriteValue =
+                  '${field.type.baseName}(rawValue: data["${field.name.snakeCase}"] as! ${isStringEnum ? 'String' : 'Int'})!';
+            } else if (field.type.isClass) {
+              toWriteValue =
+                  '${field.type.baseName}.fromJson(data: data["${field.name.snakeCase}"] as! Dictionary<String, Any?>)';
+            } else {
+              toWriteValue =
+                  'data["${field.name.snakeCase}"] as${field.type.isNullable ? '?' : '!'} ${_swiftTypeForDartType(field.type)}';
+            }
+            indent.writeln('${field.name}: $toWriteValue$comma');
+          }
+        });
+      },
+    );
 
-    indent.addScoped('{', '}', () {
-      enumerate(getFieldsInSerializationOrder(classDefinition),
-          (int index, final NamedType field) {
-        final String listValue = 'list[$index]';
+    // Original code
+    // final String className = classDefinition.name;
+    // indent.write('static func fromList(_ list: [Any?]) -> $className? ');
 
-        _writeDecodeCasting(
-          indent: indent,
-          value: listValue,
-          variableName: field.name,
-          type: field.type,
-        );
-      });
+    // indent.addScoped('{', '}', () {
+    //   enumerate(getFieldsInSerializationOrder(classDefinition), (int index, final NamedType field) {
+    //     final String listValue = 'list[$index]';
 
-      indent.newln();
-      indent.write('return ');
-      indent.addScoped('$className(', ')', () {
-        for (final NamedType field
-            in getFieldsInSerializationOrder(classDefinition)) {
-          final String comma =
-              getFieldsInSerializationOrder(classDefinition).last == field
-                  ? ''
-                  : ',';
-          indent.writeln('${field.name}: ${field.name}$comma');
-        }
-      });
-    });
+    //     _writeDecodeCasting(
+    //       indent: indent,
+    //       value: listValue,
+    //       variableName: field.name,
+    //       type: field.type,
+    //     );
+    //   });
+
+    //   indent.newln();
+    //   indent.write('return ');
+    //   indent.addScoped('$className(', ')', () {
+    //     for (final NamedType field in getFieldsInSerializationOrder(classDefinition)) {
+    //       final String comma = getFieldsInSerializationOrder(classDefinition).last == field ? '' : ',';
+    //       indent.writeln('${field.name}: ${field.name}$comma');
+    //     }
+    //   });
+    // });
   }
 
   void _writeClassField(Indent indent, NamedType field) {
-    addDocumentationComments(
-        indent, field.documentationComments, _docCommentSpec);
+    addDocumentationComments(indent, field.documentationComments, _docCommentSpec);
 
-    indent.write(
-        'var ${field.name}: ${_nullsafeSwiftTypeForDartType(field.type)}');
+    indent.write('var ${field.name}: ${_nullsafeSwiftTypeForDartType(field.type)}');
     final String defaultNil = field.type.isNullable ? ' = nil' : '';
     indent.addln(defaultNil);
   }
@@ -866,6 +995,22 @@ String _swiftTypeForBuiltinGenericDartType(TypeDeclaration type) {
       return '${type.baseName}<${_flattenTypeArguments(type.typeArguments)}>';
     }
   }
+}
+
+/// Currently used to replace `null` with `nil` because `null` is not a thing in Swift
+String _swiftValueForDartValue(String? value) {
+  /// These are 2 distinct cases.
+  /// The first one is an Error because it means a default value was supposed to be there but failed.
+  /// The second is a mapping of Dart's `null` to Swift's `nil`.
+  if (value == null) {
+    throw Exception('Null value found for default constructor value');
+  }
+
+  if (value == 'null') {
+    return 'nil';
+  }
+
+  return value;
 }
 
 String? _swiftTypeForBuiltinDartType(TypeDeclaration type) {

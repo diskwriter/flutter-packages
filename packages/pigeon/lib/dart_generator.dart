@@ -269,6 +269,7 @@ class DartGenerator extends StructuredGenerator<DartOptions> {
           indent.writeln('${classDefinition.name}.$namedConstructor()');
         }
 
+        /// 3. Write the values that are default for this named constructor
         if (hasConstructorDefaultValues) {
           if (hasConstructorNonDefaultValues) {
             indent.add(' : ');
@@ -300,12 +301,6 @@ class DartGenerator extends StructuredGenerator<DartOptions> {
     }
   }
 
-  String _camelCaseToSnakeCase(String value) {
-    final RegExp regExp = RegExp(r'(?=[A-Z])');
-    final List<String> split = value.split(regExp).map((String s) => s.toLowerCase()).toList();
-    return split.join('_');
-  }
-
   @override
   void writeClassEncode(
     DartOptions generatorOptions,
@@ -318,7 +313,7 @@ class DartGenerator extends StructuredGenerator<DartOptions> {
     indent.addScoped(' {', '};', () {
       for (final NamedType field in getFieldsInSerializationOrder(classDefinition)) {
         indent.writeln(
-            "'${_camelCaseToSnakeCase(field.name)}': ${field.name}${field.type.isEnum ? '.toString()' : ''}${field.type.isClass ? '.toJson()' : ''},");
+            "'${field.name.snakeCase}': ${field.name}${field.type.isEnum ? '.toString()' : ''}${field.type.isClass ? '.toJson()' : ''},");
       }
     });
 
@@ -360,12 +355,12 @@ class DartGenerator extends StructuredGenerator<DartOptions> {
       bool isFirst = true;
       for (final NamedType field in getFieldsInSerializationOrder(classDefinition)) {
         if (isFirst) {
-          indent.write(": ${field.name} = data['${_camelCaseToSnakeCase(field.name)}']");
+          indent.write(": ${field.name} = data['${field.name.snakeCase}']");
           isFirst = false;
         } else {
           indent.add(',');
           indent.newln();
-          indent.write("${indent.tab}${field.name} = data['${_camelCaseToSnakeCase(field.name)}']");
+          indent.write("${indent.tab}${field.name} = data['${field.name.snakeCase}']");
         }
       }
       indent.add(';');
