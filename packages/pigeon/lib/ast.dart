@@ -356,10 +356,20 @@ class Class extends Node {
     required this.fields,
     this.documentationComments = const <String>[],
     this.meta,
+    this.extendsClause,
   });
 
   /// The name of the class.
   String name;
+
+  /// Contains the extends clause for the class.
+  ExtendsClause? extendsClause;
+
+  /// Ease getter to get the named of superclass(es);
+  String? get superClass => extendsClause?.superclass.name2.toString();
+
+  /// Easy check to see if a class has an extends clause
+  bool get hasSuperClass => extendsClause != null;
 
   /// All the named constructors of this class
   List<String> namedConstructors = <String>[];

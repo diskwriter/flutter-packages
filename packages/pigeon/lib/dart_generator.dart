@@ -124,7 +124,7 @@ class DartGenerator extends StructuredGenerator<DartOptions> {
     Enum anEnum, {
     required String dartPackageName,
   }) {
-    if (anEnum.hasMetaData('StringEnum')) {
+    if (anEnum.isStringEnum) {
       _writeStringEnum(generatorOptions, root, indent, anEnum, dartPackageName: dartPackageName);
     } else {
       _writeEnum(generatorOptions, root, indent, anEnum, dartPackageName: dartPackageName);
@@ -185,7 +185,8 @@ class DartGenerator extends StructuredGenerator<DartOptions> {
   }) {
     indent.newln();
     addDocumentationComments(indent, classDefinition.documentationComments, _docCommentSpec);
-    indent.write('class ${classDefinition.name} ');
+    indent.write(
+        'class ${classDefinition.name} ${classDefinition.hasSuperClass ? 'extends ${classDefinition.superClass} ' : ''}');
     indent.addScoped('{', '}', () {
       for (final NamedType field in getFieldsInSerializationOrder(classDefinition)) {
         addDocumentationComments(indent, field.documentationComments, _docCommentSpec);
@@ -352,15 +353,17 @@ class DartGenerator extends StructuredGenerator<DartOptions> {
   }) {
     indent.writeln('${classDefinition.name}.fromJson(Map<String, dynamic> data)');
     indent.nest(1, () {
-      bool isFirst = true;
-      for (final NamedType field in getFieldsInSerializationOrder(classDefinition)) {
-        if (isFirst) {
-          indent.write(": ${field.name} = data['${field.name.snakeCase}']");
-          isFirst = false;
+      final List<NamedType> allFields = getFieldsInSerializationOrder(classDefinition).toList();
+      for (final NamedType field in allFields) {
+        final String comma = field == allFields.last ? '' : ',';
+        if (field.type.isEnum) {
+          indent.writeln(
+              "${indent.tab}${field.name} = ${field.type.baseName}.values.firstWhere((element) => element.toString() == data['${field.name.snakeCase}'])$comma");
+        } else if (field.type.isClass) {
+          indent.writeln(
+              "${indent.tab}${field.name} = ${field.type.baseName}.fromJson(data['${field.name.snakeCase}'])$comma");
         } else {
-          indent.add(',');
-          indent.newln();
-          indent.write("${indent.tab}${field.name} = data['${field.name.snakeCase}']");
+          indent.writeln("${indent.tab}${field.name} = data['${field.name.snakeCase}']$comma");
         }
       }
       indent.add(';');

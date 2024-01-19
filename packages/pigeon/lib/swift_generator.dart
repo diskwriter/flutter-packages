@@ -125,7 +125,8 @@ import FlutterMacOS
     addDocumentationComments(indent, classDefinition.documentationComments, _docCommentSpec,
         generatorComments: generatedComments);
 
-    indent.write('struct ${classDefinition.name} ');
+    indent.write(
+        'class ${classDefinition.name}${classDefinition.hasSuperClass ? ': ${classDefinition.superClass} ' : ''} ');
     indent.addScoped('{', '}', () {
       if (classDefinition.hasMetaData('SerializeWithRuntimeType')) {
         indent.writeln('let runtimeType: String = "${classDefinition.name}"');

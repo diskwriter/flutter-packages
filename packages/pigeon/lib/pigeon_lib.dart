@@ -1188,6 +1188,7 @@ class _RootBuilder extends dart_ast_visitor.RecursiveAstVisitor<Object?> {
       _currentClass = Class(
         name: node.name.lexeme,
         fields: <NamedType>[],
+        extendsClause: node.extendsClause,
         documentationComments: _documentationCommentsParser(node.documentationComment?.tokens),
         meta: node.metadata,
       );

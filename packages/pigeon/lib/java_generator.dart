@@ -215,7 +215,8 @@ class JavaGenerator extends StructuredGenerator<JavaOptions> {
     addDocumentationComments(indent, classDefinition.documentationComments, _docCommentSpec,
         generatorComments: generatedMessages);
 
-    indent.write('public class ${classDefinition.name} ');
+    indent.write(
+        'public class ${classDefinition.name}${classDefinition.hasSuperClass ? ' extends ${classDefinition.superClass} ' : ' '}');
     indent.addScoped('{', '}', () {
       for (final NamedType field in getFieldsInSerializationOrder(classDefinition)) {
         indent.writeln(
