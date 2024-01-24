@@ -337,6 +337,10 @@ class JavaGenerator extends StructuredGenerator<JavaOptions> {
           indent.writeln('map.put("${field.name.snakeCase}", ${field.name});');
         }
       }
+
+      if (classDefinition.hasMetaData('SerializeWithRuntimeType')) {
+        indent.writeln('map.put("type", "${classDefinition.getSerializeWithRuntimeTypeMeta()}");');
+      }
       indent.writeln('return map;');
     });
 

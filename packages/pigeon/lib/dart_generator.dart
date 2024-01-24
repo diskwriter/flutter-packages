@@ -316,6 +316,9 @@ class DartGenerator extends StructuredGenerator<DartOptions> {
         indent.writeln(
             "'${field.name.snakeCase}': ${field.name}${field.type.isEnum ? '.toString()' : ''}${field.type.isClass ? '.toJson()' : ''},");
       }
+
+      if (classDefinition.hasMetaData('SerializeWithRuntimeType')) {
+        indent.writeln("'type': '${classDefinition.getSerializeWithRuntimeTypeMeta()}',");
     });
 
     // Original

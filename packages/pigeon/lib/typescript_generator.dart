@@ -1,3 +1,5 @@
+import 'package:collection/collection.dart';
+
 import 'ast.dart';
 import 'functional.dart';
 import 'generator.dart';
@@ -70,14 +72,16 @@ class TypeScriptGenerator extends StructuredGenerator<TypeScriptOptions> {
       {required String dartPackageName}) {
     indent.newln();
     addDocumentationComments(indent, classDefinition.documentationComments, _docCommentSpec);
-    indent.write('export class ${classDefinition.name} ');
+    indent.write(
+        'export class ${classDefinition.name}${classDefinition.hasSuperClass ? ' extends ${classDefinition.superClass}' : ''} ');
     indent.addScoped('{', '}', () {
       for (final NamedType field in getFieldsInSerializationOrder(classDefinition)) {
         _writeTypedVariable(indent, field);
       }
       indent.newln();
       _writeConstructor(indent, root, classDefinition);
-      _writeSerializationMethod(indent, classDefinition);
+      _writeClassDecode(indent, root, classDefinition);
+      _writeClassEncode(indent, classDefinition);
     });
   }
 
@@ -91,7 +95,8 @@ class TypeScriptGenerator extends StructuredGenerator<TypeScriptOptions> {
       }
     });
 
-    _writeParseMethod(indent, classDefinition);
+    // TODO Write encode?
+    _writeDecodeMethod(indent, classDefinition);
   }
 
   void _writeTypedVariable(
@@ -115,10 +120,10 @@ class TypeScriptGenerator extends StructuredGenerator<TypeScriptOptions> {
     return '$prefix as ${hostDatatype.datatype}$suffix';
   }
 
-  void _writeParseMethod(Indent indent, Class classDefinition) {
+  void _writeDecodeMethod(Indent indent, Class classDefinition) {
     indent.newln();
     indent.write(
-      'export function parse${classDefinition.name}(request: Record<string, any>): ${classDefinition.name} ',
+      'export function decode${classDefinition.name}(request: Record<string, any>): ${classDefinition.name} ',
     );
     indent.writeScoped('{', '}', () {
       indent.writeScoped('return {', '};', () {
@@ -138,7 +143,43 @@ class TypeScriptGenerator extends StructuredGenerator<TypeScriptOptions> {
     });
   }
 
-  void _writeSerializationMethod(Indent indent, Class classDefiniton) {
+  void _writeClassDecode(Indent indent, Root root, Class classDefinition) {
+    indent.newln();
+    indent.writeScoped('static deSerialize(data: Record<string, any | undefined>) : ${classDefinition.name} {', '}',
+        () {
+      indent.writeScoped('return new ${classDefinition.name}({', '});', () {
+        for (final NamedType field in getFieldsInSerializationOrder(classDefinition)) {
+          /// Casting enums is good enough for typescript apparently...
+          /// (In fact you don't even HAVE to cast but I cannot deal with that.)
+          if (field.type.isClass) {
+            if (field.type.isNullable) {
+              indent.writeln("${field.name}: data['${_camelCaseToSnakeCase(field.name)}'] !== undefined");
+              indent.writeln(
+                  "${indent.tab}? ${field.type.baseName}.deSerialize(data['${_camelCaseToSnakeCase(field.name)}'] as Record<string, any>)");
+              indent.writeln('${indent.tab}: undefined,');
+              continue;
+            } else {
+              indent.writeln(
+                  "${field.name}: ${field.type.baseName}.deSerialize(data['${_camelCaseToSnakeCase(field.name)}'] as Record<string, any>),");
+            }
+          } else {
+            if (field.type.isNullable) {
+              indent.writeln("${field.name}: data['${_camelCaseToSnakeCase(field.name)}'] !== undefined");
+              indent.writeln(
+                  "${indent.tab}? ${_asTypeCast(field, prefix: "data['${_camelCaseToSnakeCase(field.name)}']", suffix: '')}");
+              indent.writeln('${indent.tab}: undefined,');
+              continue;
+            }
+
+            indent.writeln(
+                '${field.name}: ${_asTypeCast(field, prefix: "data['${_camelCaseToSnakeCase(field.name)}']")}');
+          }
+        }
+      });
+    });
+  }
+
+  void _writeClassEncode(Indent indent, Class classDefiniton) {
     indent.newln();
     indent.write('serialize(): ');
     indent.addScoped('{', '}', () {
@@ -146,7 +187,7 @@ class TypeScriptGenerator extends StructuredGenerator<TypeScriptOptions> {
         _writeTypedVariable(indent, field, snakeCase: true);
       }
       if (classDefiniton.hasMetaData('SerializeWithRuntimeType')) {
-        indent.writeln('runtimeType: string,');
+        indent.writeln('type: string,');
       }
     }, addTrailingNewline: false);
 
@@ -160,7 +201,7 @@ class TypeScriptGenerator extends StructuredGenerator<TypeScriptOptions> {
           indent.writeln('${_camelCaseToSnakeCase(field.name)}: this.${field.name},');
         }
         if (classDefiniton.hasMetaData('SerializeWithRuntimeType')) {
-          indent.writeln("runtimeType: '${classDefiniton.name}',");
+          indent.writeln("type: '${classDefiniton.getSerializeWithRuntimeTypeMeta()}',");
         }
       });
     });
@@ -173,7 +214,7 @@ class TypeScriptGenerator extends StructuredGenerator<TypeScriptOptions> {
   }
 
   void _writeConstructor(Indent indent, Root root, Class classDefinition) {
-    indent.write('constructor');
+    indent.write('${classDefinition.hasMetaData('NoDefaultConstructor') ? 'private ' : ''}constructor');
     indent.addScoped('({', '})', () {
       for (final NamedType field in getFieldsInSerializationOrder(classDefinition)) {
         indent.writeln('${field.name},');
@@ -189,10 +230,65 @@ class TypeScriptGenerator extends StructuredGenerator<TypeScriptOptions> {
       }
     }, addTrailingNewline: false);
     indent.addScoped(' {', '}', () {
+      if (classDefinition.hasSuperClass) {
+        indent.writeln('super({});');
+      }
       for (final NamedType field in getFieldsInSerializationOrder(classDefinition)) {
         indent.writeln('this.${field.name} = ${field.name};');
       }
     });
+
+    if (classDefinition.hasNamedConstructors) {
+      for (final String namedConstructor in classDefinition.namedConstructors) {
+        final bool hasConstructorNonDefaultValues = classDefinition.fields.firstWhereOrNull((NamedType field) =>
+                field.constructorDefaultValues == null ||
+                !field.constructorDefaultValues!.keys.contains(namedConstructor)) !=
+            null;
+
+        indent.newln();
+        if (!hasConstructorNonDefaultValues) {
+          indent.writeln('static $namedConstructor(): ${classDefinition.name} {');
+        } else {
+          indent.writeln('static $namedConstructor({');
+          indent.nest(1, () {
+            final List<NamedType> allFields = getFieldsInSerializationOrder(classDefinition).toList();
+            for (final NamedType field in allFields) {
+              if (field.constructorDefaultValues == null ||
+                  !field.constructorDefaultValues!.keys.contains(namedConstructor)) {
+                indent.writeln('${field.name},');
+              }
+            }
+          });
+          indent.writeln('} : {');
+          indent.nest(1, () {
+            final List<NamedType> allFields = getFieldsInSerializationOrder(classDefinition).toList();
+            for (final NamedType field in allFields) {
+              if (field.constructorDefaultValues == null ||
+                  !field.constructorDefaultValues!.keys.contains(namedConstructor)) {
+                indent.writeln(
+                    '${field.name}${field.type.isNullable ? '?' : ''}: ${_typeScriptTypeForBuiltinDartType(field.type)};');
+              }
+            }
+          });
+          indent.writeln('}): ${classDefinition.name} {');
+        }
+        indent.nest(1, () {
+          indent.writeScoped('return new ${classDefinition.name}({', '})', () {
+            final List<NamedType> allFields = getFieldsInSerializationOrder(classDefinition).toList();
+            for (final NamedType field in allFields) {
+              if (field.constructorDefaultValues == null ||
+                  !field.constructorDefaultValues!.keys.contains(namedConstructor)) {
+                indent.writeln('${field.name},');
+              } else {
+                indent.writeln(
+                    '${field.name}: ${_mapNullToUndefined(field.constructorDefaultValues![namedConstructor])},');
+              }
+            }
+          });
+        });
+        indent.writeln('}');
+      }
+    }
   }
 
   @override
@@ -219,6 +315,10 @@ class TypeScriptGenerator extends StructuredGenerator<TypeScriptOptions> {
       {required String dartPackageName}) {
     // TODO: implement writeHostApi
   }
+}
+
+String _mapNullToUndefined(String? value) {
+  return value == 'null' || value == null ? 'undefined' : value;
 }
 
 String? _typeScriptTypeForBuiltinDartType(TypeDeclaration type) {

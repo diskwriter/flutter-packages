@@ -249,8 +249,10 @@ import FlutterMacOS
   }) {
     indent.writeScoped('public func toJson() -> Dictionary<String, Any?> {', '}', () {
       indent.writeScoped('return [', '];', () {
-        for (final NamedType field in getFieldsInSerializationOrder(classDefinition)) {
-          final String comma = getFieldsInSerializationOrder(classDefinition).last == field ? '' : ',';
+        final List<NamedType> allFields = getFieldsInSerializationOrder(classDefinition).toList();
+        for (final NamedType field in allFields) {
+          final String comma =
+              allFields.last == field && !classDefinition.hasMetaData('SerializeWithRuntimeType') ? '' : ',';
           String toWriteValue = 'self.';
           if (field.type.isEnum) {
             toWriteValue += '${field.name}.rawValue';
@@ -263,9 +265,9 @@ import FlutterMacOS
           indent.writeln('"${field.name.snakeCase}": $toWriteValue$comma');
         }
 
-        // if (classDefinition.hasMetaData('SerializeWithRuntimeType')) {
-        //   indent.writeln('runtimeType,');
-        // }
+        if (classDefinition.hasMetaData('SerializeWithRuntimeType')) {
+          indent.writeln('"type": "${classDefinition.getSerializeWithRuntimeTypeMeta()}"');
+        }
       });
     });
 

@@ -76,7 +76,10 @@ class TypeScriptInterface {
 /// Can help with deserialization on the other end.
 class SerializeWithRuntimeType {
   /// Constructor for WithRuntimeType.
-  const SerializeWithRuntimeType();
+  const SerializeWithRuntimeType(this.type);
+
+  /// type that we will asign while serializing.
+  final String type;
 }
 
 /// Metadata to force an enum to render as a class enum with string members.

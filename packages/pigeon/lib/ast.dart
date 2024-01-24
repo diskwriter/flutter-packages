@@ -409,6 +409,23 @@ class Class extends Node {
     final Iterable<Annotation> annotations = meta!.where((Annotation element) => element.name.name == query);
     return annotations.isNotEmpty;
   }
+
+  String? getSerializeWithRuntimeTypeMeta() {
+    if (meta == null) {
+      return null;
+    }
+    final Iterable<Annotation> annotations =
+        meta!.where((Annotation element) => element.name.name == 'SerializeWithRuntimeType');
+
+    return annotations.isEmpty
+        ? null
+        : annotations.first.arguments?.arguments.first.asNullable<SimpleStringLiteral>()?.value;
+  }
+}
+
+extension _ObjectAs on Object {
+  /// A convenience for chaining calls with casts.
+  T? asNullable<T>() => this as T?;
 }
 
 /// Represents a Enum.
