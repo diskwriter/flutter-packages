@@ -34,6 +34,7 @@ import 'java_generator.dart';
 import 'kotlin_generator.dart';
 import 'objc_generator.dart';
 import 'swift_generator.dart';
+import 'typescript_generator.dart';
 
 class _Asynchronous {
   const _Asynchronous();
@@ -49,6 +50,61 @@ class ConfigurePigeon {
 
   /// The [PigeonOptions] that will be merged into the command line options.
   final PigeonOptions options;
+}
+
+/// MetaData to annotate a Dart class as a required Pigeon message.
+///
+/// This annotation is used for Models that you want to be translated in the
+/// messages but not necessarily referenced in de Host-/FlutterApi.
+/// With this annotation you can generate models without generating api.
+class RequiredModel {
+  /// Constructor for RequiredModel.
+  const RequiredModel({List<String>? exceptFor}) : exceptions = exceptFor ?? const <String>[];
+
+  /// This allows you to add a list of excepted languages where this model is not required.
+  final List<String> exceptions;
+}
+
+/// MetatData to indicate that the class should render as an interface rather
+/// than a class.
+///
+/// Because in TypeScript you might want to generate and interface for an object rather than an actual class.
+/// Will also cause a `parse` method to be generated that will give you a responding type back.
+class TypeScriptInterface {
+  /// Constructor for TypeScriptInterface.
+  const TypeScriptInterface();
+}
+
+/// Metadata to inject the RuntimeType into the serialized message.
+/// Can help with deserialization on the other end.
+class SerializeWithRuntimeType {
+  /// Constructor for WithRuntimeType.
+  const SerializeWithRuntimeType(this.type);
+
+  /// type that we will asign while serializing.
+  final String type;
+}
+
+/// Metadata to force an enum to render as a class enum with string members.
+/// By default it will take the constant values as exact match for the strings.
+/// Will also override the values / toString methods so they are EnumName.constant
+/// (Because this is how dart .toString works by default and we need that to reconstruct in our codebase)
+class StringEnum {
+  /// Constructor for StringEnum
+  const StringEnum();
+}
+
+/// For some cases you don't want to allow a default constructor (for example if there are only named constructors)
+/// You still need to create a default constructor for visit but can disable in generation.
+class NoDefaultConstructor {
+  /// Constructor for NoDefaultConstructor
+  const NoDefaultConstructor();
+}
+
+/// Stops the generator from adding serialization methods to the class if you don't want them to be there.
+class NoDeserialization {
+  /// Constructor for NoDeserialization
+  const NoDeserialization();
 }
 
 /// Metadata to annotate a Pigeon API implemented by the host-platform.
@@ -191,8 +247,16 @@ class PigeonOptions {
     this.astOut,
     this.debugGenerators,
     this.basePath,
+    this.typeScriptOut,
+    this.typeScriptOptions,
     String? dartPackageName,
   }) : _dartPackageName = dartPackageName;
+
+  /// Path to the typescript file out that will be generated
+  final String? typeScriptOut;
+
+  /// Options that control how TypeScript will be generated.
+  final TypeScriptOptions? typeScriptOptions;
 
   /// Path to the file which will be processed.
   final String? input;
@@ -298,6 +362,10 @@ class PigeonOptions {
       debugGenerators: map['debugGenerators'] as bool?,
       basePath: map['basePath'] as String?,
       dartPackageName: map['dartPackageName'] as String?,
+      typeScriptOut: map['typeScriptOut'] as String?,
+      typeScriptOptions: map.containsKey('typeScriptOptions')
+          ? TypeScriptOptions.fromMap(map['typeScriptOptions']! as Map<String, Object>)
+          : null,
     );
   }
 
@@ -306,6 +374,8 @@ class PigeonOptions {
   Map<String, Object> toMap() {
     final Map<String, Object> result = <String, Object>{
       if (input != null) 'input': input!,
+      if (typeScriptOut != null) 'typeScriptOut': typeScriptOut!,
+      if (typeScriptOptions != null) 'typeScriptOptions': typeScriptOptions!.toMap(),
       if (dartOut != null) 'dartOut': dartOut!,
       if (dartTestOut != null) 'dartTestOut': dartTestOut!,
       if (objcHeaderOut != null) 'objcHeaderOut': objcHeaderOut!,
@@ -698,6 +768,36 @@ class CppGeneratorAdapter implements GeneratorAdapter {
   List<Error> validate(PigeonOptions options, Root root) => <Error>[];
 }
 
+/// Typescript generator adapter
+class TypeScriptGeneratorAdapter implements GeneratorAdapter {
+  /// Constructor
+  TypeScriptGeneratorAdapter({this.fileTypeList = const <FileType>[FileType.na]});
+
+  @override
+  List<FileType> fileTypeList;
+
+  @override
+  void generate(StringSink sink, PigeonOptions options, Root root, FileType fileType) {
+    final TypeScriptOptions generatorOptions = options.typeScriptOptions ?? const TypeScriptOptions();
+    // TODO: options??
+    // TODO: implement generate
+    final TypeScriptGenerator generator = TypeScriptGenerator();
+    generator.generate(generatorOptions, root, sink, dartPackageName: options.getPackageName());
+  }
+
+  @override
+  IOSink? shouldGenerate(PigeonOptions options, FileType fileType) =>
+      _openSink(options.typeScriptOut, basePath: options.basePath ?? '');
+
+  @override
+  List<Error> validate(PigeonOptions options, Root root) {
+    // TODO: implement validate
+    // throw UnimplementedError();
+    // TODO:
+    return <Error>[];
+  }
+}
+
 /// A [GeneratorAdapter] that generates Kotlin source code.
 class KotlinGeneratorAdapter implements GeneratorAdapter {
   /// Constructor for [KotlinGeneratorAdapter].
@@ -903,13 +1003,11 @@ class _RootBuilder extends dart_ast_visitor.RecursiveAstVisitor<Object?> {
     _storeCurrentApi();
     _storeCurrentClass();
 
-    final Map<TypeDeclaration, List<int>> referencedTypes =
-        getReferencedTypes(_apis, _classes);
-    final Set<String> referencedTypeNames =
-        referencedTypes.keys.map((TypeDeclaration e) => e.baseName).toSet();
+    final Map<TypeDeclaration, List<int>> referencedTypes = getReferencedTypes(_apis, _classes);
+    final Set<String> referencedTypeNames = referencedTypes.keys.map((TypeDeclaration e) => e.baseName).toSet();
     final List<Class> referencedClasses = List<Class>.from(_classes);
     referencedClasses
-        .removeWhere((Class x) => !referencedTypeNames.contains(x.name));
+        .removeWhere((Class x) => !referencedTypeNames.contains(x.name) && !_hasMetadata(x.meta!, 'RequiredModel'));
 
     final List<Enum> referencedEnums = List<Enum>.from(_enums);
     final Root completeRoot =
@@ -1102,8 +1200,9 @@ class _RootBuilder extends dart_ast_visitor.RecursiveAstVisitor<Object?> {
       _currentClass = Class(
         name: node.name.lexeme,
         fields: <NamedType>[],
-        documentationComments:
-            _documentationCommentsParser(node.documentationComment?.tokens),
+        extendsClause: node.extendsClause,
+        documentationComments: _documentationCommentsParser(node.documentationComment?.tokens),
+        meta: node.metadata,
       );
     }
 
@@ -1324,6 +1423,7 @@ class _RootBuilder extends dart_ast_visitor.RecursiveAstVisitor<Object?> {
             ),
             name: name,
             offset: node.offset,
+            // TODO: There's no point in doing this since the AST traverse happens too late.
             defaultValue: _currentClassDefaultValues[name],
             documentationComments:
                 _documentationCommentsParser(node.documentationComment?.tokens),
@@ -1362,12 +1462,52 @@ class _RootBuilder extends dart_ast_visitor.RecursiveAstVisitor<Object?> {
                 'Constructor initializers aren\'t supported in data classes (use "this.fieldName") ("$node").',
             lineNumber: _calculateLineNumber(source, node.offset)));
       } else {
-        for (final dart_ast.FormalParameter param
-            in node.parameters.parameters) {
-          if (param is dart_ast.DefaultFormalParameter) {
-            if (param.name != null && param.defaultValue != null) {
-              _currentClassDefaultValues[param.name!.toString()] =
-                  param.defaultValue!.toString();
+        /// If `node.name` is not null then we're working with a named constructor.
+        /// These are properly visited so that means that we can create them too.
+        /// If we are working with a named constructor we will check out the parameter (fields)
+        /// and load them under the named constructor.
+        ///
+        /// By doing this we can then later recreate a constructor method with the correct
+        /// defaults for that constructor in the correct way for that language.
+        /// (This saves us having to implement initializers because they are not supported by default in Pigeon);
+        if (node.name != null) {
+          _currentClass?.namedConstructors.add(node.name!.toString());
+          _currentClass?.namedConstructorParameters[node.name!.toString()] = node.parameters.parameters;
+          for (final dart_ast.FormalParameter param in node.parameters.parameters) {
+            if (param is dart_ast.DefaultFormalParameter) {
+              /// Find the field on the class that matches with the parameter.
+              final NamedType? field =
+                  _currentClass?.fields.firstWhereOrNull((NamedType element) => element.name == param.name?.toString());
+
+              /// Check to make sure we actually found something
+              if (field != null) {
+                /// Indicate if for this constructor the field is required or not. This can differ based on the constructor
+                /// and is unrelated to whether the field is nullable (because it can be set by a defautl value)
+                field.constructorRequiredParameters ??= <String, bool>{};
+                field.constructorRequiredParameters![node.name!.toString()] = param.isRequired;
+
+                /// Set default values if they exist.
+                if (param.name != null && param.defaultValue != null) {
+                  field.constructorDefaultValues ??= <String, String>{};
+                  field.constructorDefaultValues![node.name!.toString()] = param.defaultValue!.toString();
+                }
+              }
+            }
+          }
+        } else {
+          // By default the params are just loaded on class level.
+          for (final dart_ast.FormalParameter param in node.parameters.parameters) {
+            if (param is dart_ast.DefaultFormalParameter) {
+              // Building default values;
+              if (param.name != null && param.defaultValue != null) {
+                // This does not work because the class fields are traversed BEFORE the constructor is.
+                // Hence, the fields are always assigned an empty map with default values.
+                // TODO --> PR to actual Pigeon repo.
+                // _currentClassDefaultValues[param.name!.toString()] = param.defaultValue!.toString();
+                _currentClass?.fields
+                    .firstWhereOrNull((NamedType element) => element.name == param.name!.toString())
+                    ?.defaultValue = param.defaultValue!.toString();
+              }
             }
           }
         }
@@ -1620,6 +1760,7 @@ ${_argParser.usage}''';
           CppGeneratorAdapter(),
           DartTestGeneratorAdapter(),
           ObjcGeneratorAdapter(),
+          TypeScriptGeneratorAdapter(),
           AstGeneratorAdapter(),
         ];
     _executeConfigurePigeon(options);

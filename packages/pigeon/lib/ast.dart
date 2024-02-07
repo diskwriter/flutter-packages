@@ -2,6 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+import 'package:analyzer/dart/ast/ast.dart';
 import 'package:collection/collection.dart' show ListEquality;
 import 'package:meta/meta.dart';
 import 'pigeon_lib.dart';
@@ -215,8 +216,17 @@ class TypeDeclaration {
   }
 }
 
+/// For mapping in our JSON formats.
+extension SnakeCaseGetter on String {
+  /// Returns a copy of the string but as a snake cased string.
+  String get snakeCase {
+    final RegExp regExp = RegExp(r'(?=[A-Z])');
+    final List<String> split = this.split(regExp).map((String s) => s.toLowerCase()).toList();
+    return split.join('_');
+  }
+}
+
 /// Represents a named entity that has a type.
-@immutable
 class NamedType extends Node {
   /// Parametric constructor for [NamedType].
   NamedType({
@@ -224,6 +234,8 @@ class NamedType extends Node {
     required this.type,
     this.offset,
     this.defaultValue,
+    this.constructorDefaultValues,
+    this.constructorRequiredParameters,
     this.documentationComments = const <String>[],
   });
 
@@ -237,7 +249,17 @@ class NamedType extends Node {
   final int? offset;
 
   /// Stringified version of the default value of types that have default values.
-  final String? defaultValue;
+  String? defaultValue;
+
+  /// Default values for different named constructors.
+  /// Key should be the name of the constructor with value being the default value for that constructor.
+  Map<String, String>? constructorDefaultValues;
+
+  /// Whether or not a parameter is required on a certain (named) constructor.
+  /// These have to be seperately stored because the analyzer doesn't provide this information.
+  /// and the values can differ based on the named constructor.
+  /// Key is constructor name, value is whether the parameter is required.
+  Map<String, bool>? constructorRequiredParameters;
 
   /// List of documentation comments, separated by line.
   ///
@@ -253,6 +275,8 @@ class NamedType extends Node {
       type: type,
       offset: offset,
       defaultValue: defaultValue,
+      constructorDefaultValues: constructorDefaultValues,
+      constructorRequiredParameters: constructorRequiredParameters,
       documentationComments: documentationComments,
     );
   }
@@ -264,7 +288,6 @@ class NamedType extends Node {
 }
 
 /// Represents a [Method]'s parameter that has a type and a name.
-@immutable
 class Parameter extends NamedType {
   /// Parametric constructor for [Parameter].
   Parameter({
@@ -331,10 +354,30 @@ class Class extends Node {
     required this.name,
     required this.fields,
     this.documentationComments = const <String>[],
+    this.meta,
+    this.extendsClause,
   });
 
   /// The name of the class.
   String name;
+
+  /// Contains the extends clause for the class.
+  ExtendsClause? extendsClause;
+
+  /// Ease getter to get the named of superclass(es);
+  String? get superClass => extendsClause?.superclass.name2.toString();
+
+  /// Easy check to see if a class has an extends clause
+  bool get hasSuperClass => extendsClause != null;
+
+  /// All the named constructors of this class
+  List<String> namedConstructors = <String>[];
+
+  /// Easy getter to see if a class definition has named constructors.
+  bool get hasNamedConstructors => namedConstructors.isNotEmpty;
+
+  /// All the fields used in named constructors
+  Map<String, List<FormalParameter>> namedConstructorParameters = <String, List<FormalParameter>>{};
 
   /// All the fields contained in the class.
   List<NamedType> fields;
@@ -346,10 +389,71 @@ class Class extends Node {
   /// For example: [" List of documentation comments, separated by line.", ...]
   List<String> documentationComments;
 
+  /// List of annotations.
+  /// Used for `@RequiredModel`, `@WithRuntimeType` and `@TypeScriptInterface` annotation.
+  NodeList<Annotation>? meta;
+
   @override
   String toString() {
     return '(Class name:$name fields:$fields documentationComments:$documentationComments)';
   }
+
+  /// Check to see if a property is present in the `NodeList<Annotation> meta` of the class.
+  /// Will return false if meta is null.
+  bool hasMetaData(String query) {
+    if (meta == null) {
+      return false;
+    }
+
+    final Iterable<Annotation> annotations = meta!.where((Annotation element) => element.name.name == query);
+    return annotations.isNotEmpty;
+  }
+
+  /// Easy getter to get the runtimeType to add during serialization.
+  String? getSerializeWithRuntimeTypeMeta() {
+    if (meta == null) {
+      return null;
+    }
+    final Iterable<Annotation> annotations =
+        meta!.where((Annotation element) => element.name.name == 'SerializeWithRuntimeType');
+
+    return annotations.isEmpty
+        ? null
+        : annotations.first.arguments?.arguments.first.asNullable<SimpleStringLiteral>()?.value;
+  }
+
+  /// Easy check to see if the current language is an exception when using the `@RequiredModel` annotation.
+  bool isAnExcludedLanguageForRequiredModel(String language) {
+    if (meta == null) {
+      return false;
+    }
+
+    final Iterable<Annotation> annotations = meta!.where((Annotation element) => element.name.name == 'RequiredModel');
+
+    if (annotations.isEmpty) {
+      return false;
+    }
+
+    List<String> exceptions = <String>[];
+    for (final Expression expression in annotations.first.arguments!.arguments) {
+      if (expression is NamedExpression) {
+        if (expression.name.label.name == 'exceptFor') {
+          final Expression exceptionExpression = expression.expression;
+          if (exceptionExpression is ListLiteral) {
+            exceptions =
+                exceptionExpression.elements.map((CollectionElement ce) => (ce as SimpleStringLiteral).value).toList();
+          }
+        }
+      }
+    }
+
+    return exceptions.contains(language);
+  }
+}
+
+extension _ObjectAs on Object {
+  /// A convenience for chaining calls with casts.
+  T? asNullable<T>() => this as T?;
 }
 
 /// Represents a Enum.
@@ -359,6 +463,7 @@ class Enum extends Node {
     required this.name,
     required this.members,
     this.documentationComments = const <String>[],
+    this.meta,
   });
 
   /// The name of the enum.
@@ -374,10 +479,28 @@ class Enum extends Node {
   /// For example: [" List of documentation comments, separated by line.", ...]
   List<String> documentationComments;
 
+  /// Stored metadata for the enum.
+  /// Used for the [@StringEnum] annotation
+  NodeList<Annotation>? meta;
+
   @override
   String toString() {
     return '(Enum name:$name members:$members documentationComments:$documentationComments)';
   }
+
+  /// Check to see if a property is present in the `NodeList<Annotation> meta` of the class.
+  /// Will return false if meta is null.
+  bool hasMetaData(String query) {
+    if (meta == null) {
+      return false;
+    }
+
+    final Iterable<Annotation> annotations = meta!.where((Annotation element) => element.name.name == query);
+    return annotations.isNotEmpty;
+  }
+
+  /// Easy getter to see if an enum is a string enum
+  bool get isStringEnum => hasMetaData('StringEnum');
 }
 
 /// Represents a Enum member.
