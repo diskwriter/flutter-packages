@@ -120,28 +120,28 @@ class JavaGenerator extends StructuredGenerator<JavaOptions> {
     }
     if (root.classes.isNotEmpty) {
       indent.writeln('import static java.lang.annotation.ElementType.METHOD;');
-      indent
-          .writeln('import static java.lang.annotation.RetentionPolicy.CLASS;');
+      indent.writeln('import static java.lang.annotation.RetentionPolicy.CLASS;');
       indent.newln();
     }
-    indent.writeln('import android.util.Log;');
+    // indent.writeln('import android.util.Log;');
     indent.writeln('import androidx.annotation.NonNull;');
     indent.writeln('import androidx.annotation.Nullable;');
-    indent.writeln('import io.flutter.plugin.common.BasicMessageChannel;');
-    indent.writeln('import io.flutter.plugin.common.BinaryMessenger;');
-    indent.writeln('import io.flutter.plugin.common.MessageCodec;');
-    indent.writeln('import io.flutter.plugin.common.StandardMessageCodec;');
-    indent.writeln('import java.io.ByteArrayOutputStream;');
+    // indent.writeln('import io.flutter.plugin.common.BasicMessageChannel;');
+    // indent.writeln('import io.flutter.plugin.common.BinaryMessenger;');
+    // indent.writeln('import io.flutter.plugin.common.MessageCodec;');
+    // indent.writeln('import io.flutter.plugin.common.StandardMessageCodec;');
+    // indent.writeln('import java.io.ByteArrayOutputStream;');
+    indent.writeln('import com.investsuite.plugins.investsuite_sdk_embedding.util.parser.JsonParserUtil;');
     if (root.classes.isNotEmpty) {
       indent.writeln('import java.lang.annotation.Retention;');
       indent.writeln('import java.lang.annotation.Target;');
     }
-    indent.writeln('import java.nio.ByteBuffer;');
-    indent.writeln('import java.util.ArrayList;');
-    indent.writeln('import java.util.Arrays;');
-    indent.writeln('import java.util.Collections;');
+    // indent.writeln('import java.nio.ByteBuffer;');
+    // indent.writeln('import java.util.ArrayList;');
+    // indent.writeln('import java.util.Arrays;');
+    // indent.writeln('import java.util.Collections;');
     indent.writeln('import java.util.HashMap;');
-    indent.writeln('import java.util.List;');
+    // indent.writeln('import java.util.List;');
     indent.writeln('import java.util.Map;');
     indent.newln();
   }
@@ -186,7 +186,7 @@ class JavaGenerator extends StructuredGenerator<JavaOptions> {
       enumerate(anEnum.members, (int index, final EnumMember member) {
         addDocumentationComments(indent, member.documentationComments, _docCommentSpec);
         indent.writeln(
-            "${camelToSnake(member.name)}(${isStringEnum ? "'${anEnum.name}.${member.name}'" : index})${index == anEnum.members.length - 1 ? ';' : ','}");
+            '${camelToSnake(member.name)}(${isStringEnum ? '"${anEnum.name}.${member.name}"' : index})${index == anEnum.members.length - 1 ? ';' : ','}');
       });
       indent.newln();
       // This uses default access (package-private), because private causes
@@ -197,6 +197,18 @@ class JavaGenerator extends StructuredGenerator<JavaOptions> {
       indent.addScoped('{', '}', () {
         indent.writeln('this.value = value;');
       });
+
+      if (isStringEnum) {
+        indent.newln();
+        indent.writeScoped('static public ${anEnum.name} fromStringValue(String stringValue) {', '}', () {
+          indent.writeScoped('for(${anEnum.name} current : ${anEnum.name}.values()) {', '}', () {
+            indent.writeScoped('if (current.value.equals(stringValue)) {', '}', () {
+              indent.writeln('return current;');
+            });
+          });
+          indent.writeln('return ${anEnum.name}.values()[0];');
+        });
+      }
     });
   }
 
@@ -216,22 +228,23 @@ class JavaGenerator extends StructuredGenerator<JavaOptions> {
         generatorComments: generatedMessages);
 
     indent.write(
-        'public class ${classDefinition.name}${classDefinition.hasSuperClass ? ' extends ${classDefinition.superClass} ' : ' '}');
+        'static public class ${classDefinition.name}${classDefinition.hasSuperClass ? ' extends ${classDefinition.superClass} ' : ' '}');
     indent.addScoped('{', '}', () {
       for (final NamedType field in getFieldsInSerializationOrder(classDefinition)) {
         indent.writeln(
-            'final ${_nullabilityAnnotationFromType(field.type)}${_javaTypeForDartType(field.type)} ${field.name};');
+            'public final ${_nullabilityAnnotationFromType(field.type)}${_javaTypeForDartType(field.type)} ${field.name};');
       }
       _writeConstructors(generatorOptions, root, indent, classDefinition);
 
-      writeClassDecode(
-        generatorOptions,
-        root,
-        indent,
-        classDefinition,
-        dartPackageName: dartPackageName,
-      );
-
+      if (!classDefinition.hasMetaData('NoDeserialization')) {
+        writeClassDecode(
+          generatorOptions,
+          root,
+          indent,
+          classDefinition,
+          dartPackageName: dartPackageName,
+        );
+      }
       writeClassEncode(
         generatorOptions,
         root,
@@ -269,12 +282,6 @@ class JavaGenerator extends StructuredGenerator<JavaOptions> {
                 !field.constructorDefaultValues!.keys.contains(namedConstructor)) !=
             null;
 
-        final bool hasConstructorDefaultValues = classDefinition.fields.firstWhereOrNull((NamedType field) {
-              return field.constructorDefaultValues != null &&
-                  field.constructorDefaultValues!.keys.contains(namedConstructor);
-            }) !=
-            null;
-
         indent.newln();
 
         /// If there are no non-default values, we can use a static factory method without params
@@ -286,8 +293,9 @@ class JavaGenerator extends StructuredGenerator<JavaOptions> {
             for (final NamedType field in allFields) {
               if (field.constructorDefaultValues == null ||
                   !field.constructorDefaultValues!.keys.contains(namedConstructor)) {
+                final String comma = field == allFields.last ? '' : ',';
                 indent.writeln(
-                    '${_nullabilityAnnotationFromType(field.type)}${_javaTypeForDartType(field.type)} ${field.name},');
+                    '${_nullabilityAnnotationFromType(field.type)}${_javaTypeForDartType(field.type)} ${field.name}$comma');
               }
             }
           });
@@ -296,11 +304,12 @@ class JavaGenerator extends StructuredGenerator<JavaOptions> {
         indent.nest(1, () {
           indent.writeScoped('return new ${classDefinition.name}(', ');', () {
             for (final NamedType field in allFields) {
+              final String comma = field == allFields.last ? '' : ',';
               if (field.constructorDefaultValues == null ||
                   !field.constructorDefaultValues!.keys.contains(namedConstructor)) {
-                indent.writeln('${field.name},');
+                indent.writeln('${field.name}$comma');
               } else {
-                indent.writeln('${field.constructorDefaultValues![namedConstructor]},');
+                indent.writeln('${field.constructorDefaultValues![namedConstructor]}$comma');
               }
             }
           });
@@ -318,19 +327,13 @@ class JavaGenerator extends StructuredGenerator<JavaOptions> {
     Class classDefinition, {
     required String dartPackageName,
   }) {
-    // TODO:
-    // int fieldAmount = classDefinition.fields.length;
-    // if (classDefinition.hasMetaData('SerializeWithRuntimeType')) {
-    //   fieldAmount += 1;
-    // }
     indent.newln();
     indent.writeScoped('public Map<String, Object> toJson() {', '}', () {
       indent.writeln('Map<String, Object> map = new HashMap<String, Object>();');
       for (final NamedType field in getFieldsInSerializationOrder(classDefinition)) {
         if (field.type.isEnum) {
           final bool isStringEnum = field.type.associatedEnum?.isStringEnum ?? false;
-          indent
-              .writeln('map.put("${field.name.snakeCase}", ${field.name}.${isStringEnum ? 'stringValue' : 'index'});');
+          indent.writeln('map.put("${field.name.snakeCase}", ${field.name}.${isStringEnum ? 'value' : 'index'});');
         } else if (field.type.isClass) {
           indent.writeln('map.put("${field.name.snakeCase}", ${field.name}.toJson());');
         } else {
@@ -386,7 +389,7 @@ class JavaGenerator extends StructuredGenerator<JavaOptions> {
           if (field.type.isEnum) {
             final bool isStringEnum = field.type.associatedEnum?.isStringEnum ?? false;
             indent.writeln(
-                '${field.type.baseName}.parse((${isStringEnum ? 'String' : 'int'}) map.get("${field.name.snakeCase}"))$comma');
+                '${field.type.baseName}.fromStringValue((${isStringEnum ? 'String' : 'int'}) map.get("${field.name.snakeCase}"))$comma');
           } else if (field.type.isClass) {
             indent.writeln(
                 '${field.type.baseName}.fromJson((Map<String, Object>) map.get("${field.name.snakeCase}"))$comma');
@@ -1097,6 +1100,7 @@ String? _javaTypeForBuiltinDartType(TypeDeclaration type) {
     'Int64List': 'long[]',
     'Float64List': 'double[]',
     'Object': 'Object',
+    'dynamic': 'Object',
   };
   if (javaTypeForDartTypeMap.containsKey(type.baseName)) {
     return javaTypeForDartTypeMap[type.baseName];

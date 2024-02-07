@@ -114,6 +114,8 @@ class DartGenerator extends StructuredGenerator<DartOptions> {
     indent.writeln(
         "import 'package:flutter/foundation.dart' show ReadBuffer, WriteBuffer;");
     indent.writeln("import 'package:flutter/services.dart';");
+    indent.newln();
+    indent.writeln("import 'package:investsuite_sdk_core/investsuite_sdk_core.dart';");
   }
 
   @override
@@ -144,7 +146,8 @@ class DartGenerator extends StructuredGenerator<DartOptions> {
     indent.addScoped('{', '}', () {
       for (final EnumMember enumMember in anEnum.members) {
         addDocumentationComments(indent, enumMember.documentationComments, _docCommentSpec);
-        indent.writeln("${enumMember.name}(stringValue: '${enumMember.name}'),");
+        final String terminator = enumMember == anEnum.members.last ? ';' : ',';
+        indent.writeln("${enumMember.name}(stringValue: '${enumMember.name}')$terminator");
       }
 
       indent.newln();
@@ -183,6 +186,10 @@ class DartGenerator extends StructuredGenerator<DartOptions> {
     Class classDefinition, {
     required String dartPackageName,
   }) {
+    if (classDefinition.isAnExcludedLanguageForRequiredModel('Dart')) {
+      print('Skipping ${classDefinition.name} because it is excluded for Dart');
+      return;
+    }
     indent.newln();
     addDocumentationComments(indent, classDefinition.documentationComments, _docCommentSpec);
     indent.write(
@@ -199,22 +206,25 @@ class DartGenerator extends StructuredGenerator<DartOptions> {
       _writeConstructor(indent, classDefinition);
 
       indent.newln();
-      writeClassDecode(
-        generatorOptions,
-        root,
-        indent,
-        classDefinition,
-        dartPackageName: dartPackageName,
-      );
 
-      indent.newln();
-      writeClassEncode(
-        generatorOptions,
-        root,
-        indent,
-        classDefinition,
-        dartPackageName: dartPackageName,
-      );
+      if (!classDefinition.hasMetaData('NoDeserialization')) {
+        writeClassDecode(
+          generatorOptions,
+          root,
+          indent,
+          classDefinition,
+          dartPackageName: dartPackageName,
+        );
+
+        indent.newln();
+        writeClassEncode(
+          generatorOptions,
+          root,
+          indent,
+          classDefinition,
+          dartPackageName: dartPackageName,
+        );
+      }
     });
   }
 
@@ -319,6 +329,7 @@ class DartGenerator extends StructuredGenerator<DartOptions> {
 
       if (classDefinition.hasMetaData('SerializeWithRuntimeType')) {
         indent.writeln("'type': '${classDefinition.getSerializeWithRuntimeTypeMeta()}',");
+      }
     });
 
     // Original
@@ -358,18 +369,18 @@ class DartGenerator extends StructuredGenerator<DartOptions> {
     indent.nest(1, () {
       final List<NamedType> allFields = getFieldsInSerializationOrder(classDefinition).toList();
       for (final NamedType field in allFields) {
-        final String comma = field == allFields.last ? '' : ',';
+        final String start = field == allFields.first ? ': ' : indent.tab;
+        final String comma = field == allFields.last ? ';' : ',';
         if (field.type.isEnum) {
           indent.writeln(
-              "${indent.tab}${field.name} = ${field.type.baseName}.values.firstWhere((element) => element.toString() == data['${field.name.snakeCase}'])$comma");
+              "${indent.tab}$start${field.name} = ${field.type.baseName}.values.firstWhere((element) => element.toString() == data['${field.name.snakeCase}'])$comma");
         } else if (field.type.isClass) {
           indent.writeln(
-              "${indent.tab}${field.name} = ${field.type.baseName}.fromJson(data['${field.name.snakeCase}'])$comma");
+              "${indent.tab}$start${field.name} = ${field.type.baseName}.fromJson(data['${field.name.snakeCase}'])$comma");
         } else {
-          indent.writeln("${indent.tab}${field.name} = data['${field.name.snakeCase}']$comma");
+          indent.writeln("${indent.tab}$start${field.name} = data['${field.name.snakeCase}']$comma");
         }
       }
-      indent.add(';');
       indent.newln();
     });
 

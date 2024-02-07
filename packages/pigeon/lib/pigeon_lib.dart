@@ -59,7 +59,10 @@ class ConfigurePigeon {
 /// With this annotation you can generate models without generating api.
 class RequiredModel {
   /// Constructor for RequiredModel.
-  const RequiredModel();
+  const RequiredModel({List<String>? exceptFor}) : exceptions = exceptFor ?? const <String>[];
+
+  /// This allows you to add a list of excepted languages where this model is not required.
+  final List<String> exceptions;
 }
 
 /// MetatData to indicate that the class should render as an interface rather
@@ -96,6 +99,12 @@ class StringEnum {
 class NoDefaultConstructor {
   /// Constructor for NoDefaultConstructor
   const NoDefaultConstructor();
+}
+
+/// Stops the generator from adding serialization methods to the class if you don't want them to be there.
+class NoDeserialization {
+  /// Constructor for NoDeserialization
+  const NoDeserialization();
 }
 
 /// Metadata to annotate a Pigeon API implemented by the host-platform.
@@ -1414,6 +1423,7 @@ class _RootBuilder extends dart_ast_visitor.RecursiveAstVisitor<Object?> {
             ),
             name: name,
             offset: node.offset,
+            // TODO: There's no point in doing this since the AST traverse happens too late.
             defaultValue: _currentClassDefaultValues[name],
             documentationComments:
                 _documentationCommentsParser(node.documentationComment?.tokens),

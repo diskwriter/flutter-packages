@@ -288,7 +288,6 @@ class NamedType extends Node {
 }
 
 /// Represents a [Method]'s parameter that has a type and a name.
-@immutable
 class Parameter extends NamedType {
   /// Parametric constructor for [Parameter].
   Parameter({
@@ -410,6 +409,7 @@ class Class extends Node {
     return annotations.isNotEmpty;
   }
 
+  /// Easy getter to get the runtimeType to add during serialization.
   String? getSerializeWithRuntimeTypeMeta() {
     if (meta == null) {
       return null;
@@ -420,6 +420,34 @@ class Class extends Node {
     return annotations.isEmpty
         ? null
         : annotations.first.arguments?.arguments.first.asNullable<SimpleStringLiteral>()?.value;
+  }
+
+  /// Easy check to see if the current language is an exception when using the `@RequiredModel` annotation.
+  bool isAnExcludedLanguageForRequiredModel(String language) {
+    if (meta == null) {
+      return false;
+    }
+
+    final Iterable<Annotation> annotations = meta!.where((Annotation element) => element.name.name == 'RequiredModel');
+
+    if (annotations.isEmpty) {
+      return false;
+    }
+
+    List<String> exceptions = <String>[];
+    for (final Expression expression in annotations.first.arguments!.arguments) {
+      if (expression is NamedExpression) {
+        if (expression.name.label.name == 'exceptFor') {
+          final Expression exceptionExpression = expression.expression;
+          if (exceptionExpression is ListLiteral) {
+            exceptions =
+                exceptionExpression.elements.map((CollectionElement ce) => (ce as SimpleStringLiteral).value).toList();
+          }
+        }
+      }
+    }
+
+    return exceptions.contains(language);
   }
 }
 

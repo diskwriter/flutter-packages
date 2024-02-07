@@ -100,7 +100,7 @@ import FlutterMacOS
     indent.newln();
     addDocumentationComments(indent, anEnum.documentationComments, _docCommentSpec);
 
-    indent.write('enum ${anEnum.name}: ${isStringEnum ? 'String' : 'Int'} ');
+    indent.write('public enum ${anEnum.name}: ${isStringEnum ? 'String' : 'Int'} ');
     indent.addScoped('{', '}', () {
       enumerate(anEnum.members, (int index, final EnumMember member) {
         addDocumentationComments(indent, member.documentationComments, _docCommentSpec);
@@ -126,35 +126,28 @@ import FlutterMacOS
         generatorComments: generatedComments);
 
     indent.write(
-        'class ${classDefinition.name}${classDefinition.hasSuperClass ? ': ${classDefinition.superClass} ' : ''} ');
+        'public class ${classDefinition.name}${classDefinition.hasSuperClass ? ': ${classDefinition.superClass} ' : ''} ');
     indent.addScoped('{', '}', () {
-      if (classDefinition.hasMetaData('SerializeWithRuntimeType')) {
-        indent.writeln('let runtimeType: String = "${classDefinition.name}"');
-      }
       getFieldsInSerializationOrder(classDefinition).forEach((NamedType field) {
         _writeClassField(indent, field);
       });
 
-      /// Structs only have member initialization for their constructors
-      /// Since we want more of a Factory Method  / Named constructor approach
-      /// we will work with an extension and write static methods on there.
-      /// Q: Does it have to be with an extension? Can't I just write classes?
+      indent.newln();
+      _writeInitMethod(generatorOptions, root, indent, classDefinition, dartPackageName: dartPackageName);
       if (classDefinition.hasNamedConstructors) {
-        indent.newln();
-        if (classDefinition.hasMetaData('NoDefaultConstructor')) {
-          _writePrivateInit(generatorOptions, root, indent, classDefinition, dartPackageName: dartPackageName);
-        }
         _writeConstructorMethods(generatorOptions, root, indent, classDefinition, dartPackageName: dartPackageName);
       }
 
       indent.newln();
-      writeClassDecode(
-        generatorOptions,
-        root,
-        indent,
-        classDefinition,
-        dartPackageName: dartPackageName,
-      );
+      if (!classDefinition.hasMetaData('NoDeserialization')) {
+        writeClassDecode(
+          generatorOptions,
+          root,
+          indent,
+          classDefinition,
+          dartPackageName: dartPackageName,
+        );
+      }
       indent.newln();
       writeClassEncode(
         generatorOptions,
@@ -175,11 +168,12 @@ import FlutterMacOS
   }) {
     /// 1. Write the default constructor but make it private. Forcing users to use the named constructors.
     indent.writeln('// Default init;');
-    indent.writeln('private init(');
+    indent.writeln("${classDefinition.hasMetaData('NoDefaultConstructor') ? 'private' : 'public'} init(");
     indent.nest(1, () {
       for (final NamedType field in getFieldsInSerializationOrder(classDefinition)) {
         final String comma = getFieldsInSerializationOrder(classDefinition).last == field ? '' : ',';
-        indent.writeln('${field.name}: ${_nullsafeSwiftTypeForDartType(field.type)}$comma');
+        indent.writeln(
+            '${field.name}: ${_nullsafeSwiftTypeForDartType(field.type)}${field.defaultValue != null && field.defaultValue!.isNotEmpty ? ' = ${field.defaultValue}' : ''}$comma');
       }
     });
     indent.writeln(') {');
@@ -204,6 +198,7 @@ import FlutterMacOS
               !field.constructorDefaultValues!.keys.contains(namedConstructor)) !=
           null;
 
+      final List<NamedType> allFields = getFieldsInSerializationOrder(classDefinition).toList();
       indent.newln();
 
       /// if we don't expect any non-default values then we can just create an empty constructor.
@@ -212,10 +207,11 @@ import FlutterMacOS
       } else {
         indent.writeln('static public func $namedConstructor(');
         indent.nest(1, () {
-          for (final NamedType field in getFieldsInSerializationOrder(classDefinition)) {
+          for (final NamedType field in allFields) {
             if (field.constructorDefaultValues == null ||
                 !field.constructorDefaultValues!.containsKey(namedConstructor)) {
-              indent.writeln('${field.name}: ${_nullsafeSwiftTypeForDartType(field.type)}, ');
+              final String comma = allFields.last == field ? '' : ',';
+              indent.writeln('${field.name}: ${_nullsafeSwiftTypeForDartType(field.type)}$comma');
             }
           }
         });
@@ -223,8 +219,8 @@ import FlutterMacOS
       }
       indent.nest(1, () {
         indent.writeScoped('return ${classDefinition.name}(', ');', () {
-          for (final NamedType field in getFieldsInSerializationOrder(classDefinition)) {
-            final String comma = getFieldsInSerializationOrder(classDefinition).last == field ? '' : ',';
+          for (final NamedType field in allFields) {
+            final String comma = allFields.last == field ? '' : ',';
             if (field.constructorDefaultValues == null ||
                 !field.constructorDefaultValues!.containsKey(namedConstructor)) {
               indent.writeln('${field.name}: ${field.name}$comma');
@@ -247,28 +243,34 @@ import FlutterMacOS
     Class classDefinition, {
     required String dartPackageName,
   }) {
-    indent.writeScoped('public func toJson() -> Dictionary<String, Any?> {', '}', () {
-      indent.writeScoped('return [', '];', () {
-        final List<NamedType> allFields = getFieldsInSerializationOrder(classDefinition).toList();
-        for (final NamedType field in allFields) {
-          final String comma =
-              allFields.last == field && !classDefinition.hasMetaData('SerializeWithRuntimeType') ? '' : ',';
-          String toWriteValue = 'self.';
-          if (field.type.isEnum) {
-            toWriteValue += '${field.name}.rawValue';
-          } else if (field.type.isClass) {
-            toWriteValue += '${field.name}.toJson()';
-          } else {
-            toWriteValue += field.name;
+    // TODO: Maybe refine this a little bit? To check for specific super classes...
+    final String override = classDefinition.hasSuperClass ? 'override ' : '';
+    final List<NamedType> allFields = getFieldsInSerializationOrder(classDefinition).toList();
+    indent.writeScoped('${override}public func toJson() -> Dictionary<String, Any?> {', '}', () {
+      if (allFields.isEmpty) {
+        indent.writeln('return [:]');
+      } else {
+        indent.writeScoped('return [', '];', () {
+          for (final NamedType field in allFields) {
+            final String comma =
+                allFields.last == field && !classDefinition.hasMetaData('SerializeWithRuntimeType') ? '' : ',';
+            String toWriteValue = 'self.';
+            if (field.type.isEnum) {
+              toWriteValue += '${field.name}${field.type.isNullable ? '?' : ''}.rawValue';
+            } else if (field.type.isClass) {
+              toWriteValue += '${field.name}${field.type.isNullable ? '?' : ''}.toJson()';
+            } else {
+              toWriteValue += field.name;
+            }
+
+            indent.writeln('"${field.name.snakeCase}": $toWriteValue$comma');
           }
 
-          indent.writeln('"${field.name.snakeCase}": $toWriteValue$comma');
-        }
-
-        if (classDefinition.hasMetaData('SerializeWithRuntimeType')) {
-          indent.writeln('"type": "${classDefinition.getSerializeWithRuntimeTypeMeta()}"');
-        }
-      });
+          if (classDefinition.hasMetaData('SerializeWithRuntimeType')) {
+            indent.writeln('"type": "${classDefinition.getSerializeWithRuntimeTypeMeta()}"');
+          }
+        });
+      }
     });
 
     // Original code
@@ -310,9 +312,11 @@ import FlutterMacOS
       'static public func fromJson(data: Dictionary<String, Any?>) throws -> ${classDefinition.name} {',
       '}',
       () {
-        indent.writeScoped('return try ${classDefinition.name}(', ');', () {
-          for (final NamedType field in getFieldsInSerializationOrder(classDefinition)) {
-            final String comma = getFieldsInSerializationOrder(classDefinition).last == field ? '' : ',';
+        final List<NamedType> allFields = getFieldsInSerializationOrder(classDefinition).toList();
+        final bool hasClassToDecode = allFields.firstWhereOrNull((NamedType field) => field.type.isClass) != null;
+        indent.writeScoped('return${hasClassToDecode ? ' try ' : ' '}${classDefinition.name}(', ');', () {
+          for (final NamedType field in allFields) {
+            final String comma = allFields.last == field ? '' : ',';
             String toWriteValue = '';
             if (field.type.isEnum) {
               final bool isStringEnum = field.type.associatedEnum?.isStringEnum ?? false;
@@ -361,7 +365,7 @@ import FlutterMacOS
   void _writeClassField(Indent indent, NamedType field) {
     addDocumentationComments(indent, field.documentationComments, _docCommentSpec);
 
-    indent.write('var ${field.name}: ${_nullsafeSwiftTypeForDartType(field.type)}');
+    indent.write('public var ${field.name}: ${_nullsafeSwiftTypeForDartType(field.type)}');
     final String defaultNil = field.type.isNullable ? ' = nil' : '';
     indent.addln(defaultNil);
   }
@@ -1029,6 +1033,7 @@ String? _swiftTypeForBuiltinDartType(TypeDeclaration type) {
     'Float32List': 'FlutterStandardTypedData',
     'Float64List': 'FlutterStandardTypedData',
     'Object': 'Any',
+    'dynamic': 'Any',
   };
   if (swiftTypeForDartTypeMap.containsKey(type.baseName)) {
     return swiftTypeForDartTypeMap[type.baseName];

@@ -80,7 +80,9 @@ class TypeScriptGenerator extends StructuredGenerator<TypeScriptOptions> {
       }
       indent.newln();
       _writeConstructor(indent, root, classDefinition);
-      _writeClassDecode(indent, root, classDefinition);
+      if (!classDefinition.hasMetaData('NoDeserialization')) {
+        _writeClassDecode(indent, root, classDefinition);
+      }
       _writeClassEncode(indent, classDefinition);
     });
   }
@@ -153,26 +155,25 @@ class TypeScriptGenerator extends StructuredGenerator<TypeScriptOptions> {
           /// (In fact you don't even HAVE to cast but I cannot deal with that.)
           if (field.type.isClass) {
             if (field.type.isNullable) {
-              indent.writeln("${field.name}: data['${_camelCaseToSnakeCase(field.name)}'] !== undefined");
+              indent.writeln('${field.name}: data.${_camelCaseToSnakeCase(field.name)} !== undefined');
               indent.writeln(
-                  "${indent.tab}? ${field.type.baseName}.deSerialize(data['${_camelCaseToSnakeCase(field.name)}'] as Record<string, any>)");
+                  '${indent.tab}? ${field.type.baseName}.deSerialize(data.${_camelCaseToSnakeCase(field.name)} as Record<string, any>)');
               indent.writeln('${indent.tab}: undefined,');
               continue;
             } else {
               indent.writeln(
-                  "${field.name}: ${field.type.baseName}.deSerialize(data['${_camelCaseToSnakeCase(field.name)}'] as Record<string, any>),");
+                  '${field.name}: ${field.type.baseName}.deSerialize(data.${_camelCaseToSnakeCase(field.name)} as Record<string, any>),');
             }
           } else {
             if (field.type.isNullable) {
-              indent.writeln("${field.name}: data['${_camelCaseToSnakeCase(field.name)}'] !== undefined");
+              indent.writeln('${field.name}: data.${_camelCaseToSnakeCase(field.name)} !== undefined');
               indent.writeln(
-                  "${indent.tab}? ${_asTypeCast(field, prefix: "data['${_camelCaseToSnakeCase(field.name)}']", suffix: '')}");
+                  '${indent.tab}? ${_asTypeCast(field, prefix: 'data.${_camelCaseToSnakeCase(field.name)}', suffix: '')}');
               indent.writeln('${indent.tab}: undefined,');
               continue;
             }
 
-            indent.writeln(
-                '${field.name}: ${_asTypeCast(field, prefix: "data['${_camelCaseToSnakeCase(field.name)}']")}');
+            indent.writeln('${field.name}: ${_asTypeCast(field, prefix: "data.${_camelCaseToSnakeCase(field.name)}")}');
           }
         }
       });
@@ -273,7 +274,7 @@ class TypeScriptGenerator extends StructuredGenerator<TypeScriptOptions> {
           indent.writeln('}): ${classDefinition.name} {');
         }
         indent.nest(1, () {
-          indent.writeScoped('return new ${classDefinition.name}({', '})', () {
+          indent.writeScoped('return new ${classDefinition.name}({', '});', () {
             final List<NamedType> allFields = getFieldsInSerializationOrder(classDefinition).toList();
             for (final NamedType field in allFields) {
               if (field.constructorDefaultValues == null ||
